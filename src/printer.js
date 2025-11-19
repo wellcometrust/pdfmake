@@ -377,6 +377,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	pdfKitDoc._pdfMakePages = pages;
 	pdfKitDoc.addPage();
 
+	// Initialise document logical structure
+	var struct = pdfKitDoc.struct('Document');
+	pdfKitDoc.addStructure(struct);
+	
 	var totalItems = 0;
 	if (progressCallback) {
 		pages.forEach(function (page) {
@@ -388,26 +392,40 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	progressCallback = progressCallback || function () {
 	};
 
+	var pageSection;
 	for (var i = 0; i < pages.length; i++) {
 		if (i > 0) {
 			updatePageOrientationInOptions(pages[i], pdfKitDoc);
 			pdfKitDoc.addPage(pdfKitDoc.options);
 		}
+		pageSection = pdfKitDoc.struct('Sect');
+		pdfKitDoc.addStructure(pageSection);
 
 		var page = pages[i];
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
+			console.log('item',item);
 			switch (item.type) {
 				case 'vector':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					renderVector(item.item, patterns, pdfKitDoc);
 					break;
 				case 'line':
+					{
+					const paragraphItem = pdfKitDoc.struct('P');
+					pageSection.add(paragraphItem);
+
+					const paragraphContent = pdfKitDoc.markStructureContent('P');
+					paragraphItem.add(paragraphContent);
 					renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
+					paragraphItem.end();
+					}
 					break;
 				case 'image':
 					renderImage(item.item, item.item.x, item.item.y, pdfKitDoc);
 					break;
 				case 'svg':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					renderSVG(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
 					break;
 				case 'beginClip':
@@ -423,6 +441,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		if (page.watermark) {
 			renderWatermark(page, pdfKitDoc);
 		}
+		
 	}
 }
 
@@ -446,6 +465,10 @@ function offsetText(y, inline) {
 }
 
 function renderLine(line, x, y, patterns, pdfKitDoc) {
+
+	//console.log('line', line);
+	
+
 	function preparePageNodeRefLine(_pageNodeRef, inline) {
 		var newWidth;
 		var diffWidth;
@@ -485,6 +508,7 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 
 	textDecorator.drawBackground(line, x, y, patterns, pdfKitDoc);
 
+	pdfKitDoc.markContent('P');
 	//TODO: line.optimizeInlines();
 	for (var i = 0, l = line.inlines.length; i < l; i++) {
 		var inline = line.inlines[i];
@@ -522,8 +546,9 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 		pdfKitDoc.fontSize(inline.fontSize);
 
 		var shiftedY = offsetText(y + shiftToBaseline, inline);
-		pdfKitDoc.text(inline.text, x + inline.x, shiftedY, options);
-
+		pdfKitDoc.markContent('Span');
+		pdfKitDoc.text(`${inline.text}`, x + inline.x, shiftedY, options);
+		pdfKitDoc.endMarkedContent();
 		if (inline.linkToPage) {
 			var _ref = pdfKitDoc.ref({ Type: 'Action', S: 'GoTo', D: [inline.linkToPage, 0, 0] }).end();
 			pdfKitDoc.annotate(x + inline.x, shiftedY, inline.width, inline.height, {
@@ -533,6 +558,7 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 		}
 
 	}
+	pdfKitDoc.endMarkedContent();
 	// Decorations won't draw correctly for superscript
 	textDecorator.drawDecorations(line, x, y, pdfKitDoc);
 }
