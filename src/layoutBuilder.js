@@ -981,7 +981,8 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 // leafs (texts)
 LayoutBuilder.prototype.processLeaf = function (node) {
 	var line = this.buildNextLine(node);
-	if (line && (node.tocItem || node.id)) {
+
+	if (line) {
 		line._node = node;
 	}
 	var currentHeight = (line) ? line.getHeight() : 0;

@@ -377,6 +377,8 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	pdfKitDoc._pdfMakePages = pages;
 	pdfKitDoc.addPage();
 
+	var permittedBlockElements = ["H", "H1", "H2", "H3", "H4", "H5", "H6", "P"];
+
 	// Initialise document logical structure
 	var struct = pdfKitDoc.struct('Document');
 	pdfKitDoc.addStructure(struct);
@@ -402,9 +404,14 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		pdfKitDoc.addStructure(pageSection);
 
 		var page = pages[i];
+		let isOpenBlock = false;
+		var blockItem;
+		var blockContent;
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
-			console.log('item',item);
+			
+			// For items other than lines, mark the content as an Artifact so it's
+			// not included in the document structure.
 			switch (item.type) {
 				case 'vector':
 					pdfKitDoc.markContent('Artifact', { type: "Layout" });
@@ -412,16 +419,34 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 					break;
 				case 'line':
 					{
-					const paragraphItem = pdfKitDoc.struct('P');
-					pageSection.add(paragraphItem);
+						// Extract the nodeName to determine the structural type - default to paragraph
+						// if not present or not a permitted block element. List items will not be structured
+						// correctly - they should be nested within L and LBody elements, but this is better than nothing for now...	
+						var nodeName = item.item._node && item.item._node.nodeName;
+						var structType = permittedBlockElements.includes(nodeName) ? nodeName : 'P';
 
-					const paragraphContent = pdfKitDoc.markStructureContent('P');
-					paragraphItem.add(paragraphContent);
-					renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
-					paragraphItem.end();
+						// If we don't have an open block, open one now.
+						if(!isOpenBlock){
+							blockItem = pdfKitDoc.struct(structType);
+							pageSection.add(blockItem);
+
+							blockContent = pdfKitDoc.markStructureContent(structType);
+							blockItem.add(blockContent);
+							isOpenBlock = true;
+						}
+					
+						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
+
+						// If this line is the last in the block, close the block.
+						// This allows multiple lines to be grouped into a single block structure.
+						if (item.item.lastLineInParagraph) {
+							blockItem.end();
+							isOpenBlock = false;
+						}
 					}
 					break;
 				case 'image':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					renderImage(item.item, item.item.x, item.item.y, pdfKitDoc);
 					break;
 				case 'svg':
@@ -429,9 +454,11 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 					renderSVG(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
 					break;
 				case 'beginClip':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					beginClip(item.item, pdfKitDoc);
 					break;
 				case 'endClip':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					endClip(pdfKitDoc);
 					break;
 			}
