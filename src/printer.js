@@ -377,11 +377,11 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	pdfKitDoc._pdfMakePages = pages;
 	pdfKitDoc.addPage();
 
-	var permittedBlockElements = ["H", "H1", "H2", "H3", "H4", "H5", "H6", "P"];
+	var permittedBlockElements = ["H", "H1", "H2", "H3", "H4", "H5", "H6", "P", "LI"];
 
 	// Initialise document logical structure
-	var struct = pdfKitDoc.struct('Document');
-	pdfKitDoc.addStructure(struct);
+	var pdfDocument = pdfKitDoc.struct('Document');
+	pdfKitDoc.addStructure(pdfDocument);
 	
 	var totalItems = 0;
 	if (progressCallback) {
@@ -401,12 +401,13 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			pdfKitDoc.addPage(pdfKitDoc.options);
 		}
 		pageSection = pdfKitDoc.struct('Sect');
-		pdfKitDoc.addStructure(pageSection);
+		pdfDocument.add(pageSection);
 
 		var page = pages[i];
 		let isOpenBlock = false;
 		var blockItem;
 		var blockContent;
+		var listBlockItem = null;
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
 			
@@ -420,26 +421,64 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 				case 'line':
 					{
 						// Extract the nodeName to determine the structural type - default to paragraph
-						// if not present or not a permitted block element. List items will not be structured
-						// correctly - they should be nested within L and LBody elements, but this is better than nothing for now...	
+						// if not present or not a permitted block element.		
 						var nodeName = item.item._node && item.item._node.nodeName;
-						var structType = permittedBlockElements.includes(nodeName) ? nodeName : 'P';
+						var structType = null;
+						// Only consider permitted block elements as structural elements. 
+						// If the nodeName is not a permitted block element but the line has an associated node, treat it as a paragraph to ensure it's included in the structure.
+						if (permittedBlockElements.includes(nodeName)) {
+							structType = nodeName;
+						} else if (item.item._node) {
+							structType = 'P';
+						}
+
+						// Extract the text array from nodeInfo if available, to check for list item styling.
+						var nodeInfoTextArray = null;
+						if (item.item._node && Array.isArray(item.item._node.nodeInfo.text)) {
+							nodeInfoTextArray = item.item._node.nodeInfo.text;
+						}
+
+						// For nested lists, we need to check if any of the text elements in the line have the "html-li" style applied, because the parent node does not have a type.
+						if (Array.isArray(nodeInfoTextArray)) {
+							const isListItem = nodeInfoTextArray.some(text => Array.isArray(text.style) && text.style.includes("html-li"));
+							if (isListItem) {
+								structType = 'LI';
+							}
+						}
+
+						// If we are in a list and encounter a non-list item, we need to close the list block.
+						if (structType && structType !== 'LI'  && listBlockItem) {
+							listBlockItem.end();
+							listBlockItem = null;
+						}
 
 						// If we don't have an open block, open one now.
-						if(!isOpenBlock){
+						if(!isOpenBlock && structType) {
+						
 							blockItem = pdfKitDoc.struct(structType);
-							pageSection.add(blockItem);
+
+							if (structType === 'LI') {
+								if (!listBlockItem) {
+									listBlockItem = pdfKitDoc.struct('L');
+									pageSection.add(listBlockItem);
+								}
+								listBlockItem.add(blockItem);
+							} else {
+								pageSection.add(blockItem);
+							}
 
 							blockContent = pdfKitDoc.markStructureContent(structType);
 							blockItem.add(blockContent);
 							isOpenBlock = true;
+							pdfKitDoc.markContent(structType);
 						}
 					
 						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
 
 						// If this line is the last in the block, close the block.
 						// This allows multiple lines to be grouped into a single block structure.
-						if (item.item.lastLineInParagraph) {
+						if (isOpenBlock && item.item.lastLineInParagraph) {
+							pdfKitDoc.endMarkedContent();
 							blockItem.end();
 							isOpenBlock = false;
 						}
@@ -464,6 +503,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			}
 			renderedItems++;
 			progressCallback(renderedItems / totalItems);
+		}
+		if (listBlockItem) {
+			listBlockItem.end();
+			listBlockItem = null;
 		}
 		if (page.watermark) {
 			renderWatermark(page, pdfKitDoc);
@@ -535,7 +578,6 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 
 	textDecorator.drawBackground(line, x, y, patterns, pdfKitDoc);
 
-	pdfKitDoc.markContent('P');
 	//TODO: line.optimizeInlines();
 	for (var i = 0, l = line.inlines.length; i < l; i++) {
 		var inline = line.inlines[i];
@@ -573,9 +615,7 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 		pdfKitDoc.fontSize(inline.fontSize);
 
 		var shiftedY = offsetText(y + shiftToBaseline, inline);
-		pdfKitDoc.markContent('Span');
 		pdfKitDoc.text(`${inline.text}`, x + inline.x, shiftedY, options);
-		pdfKitDoc.endMarkedContent();
 		if (inline.linkToPage) {
 			var _ref = pdfKitDoc.ref({ Type: 'Action', S: 'GoTo', D: [inline.linkToPage, 0, 0] }).end();
 			pdfKitDoc.annotate(x + inline.x, shiftedY, inline.width, inline.height, {
@@ -585,7 +625,6 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 		}
 
 	}
-	pdfKitDoc.endMarkedContent();
 	// Decorations won't draw correctly for superscript
 	textDecorator.drawDecorations(line, x, y, pdfKitDoc);
 }
