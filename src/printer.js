@@ -443,7 +443,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 						// Extract the text array from nodeInfo if available, to check for list item styling.
 						var nodeInfoTextArray = null;
-						if (item.item._node && Array.isArray(item.item._node.nodeInfo.text)) {
+						if (item.item._node && item.item._node.nodeInfo &&Array.isArray(item.item._node.nodeInfo.text)) {
 							nodeInfoTextArray = item.item._node.nodeInfo.text;
 						}
 
