@@ -1,8 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.2.23 - 2026-01-11
 
-- Update Roboto font (version 3.013)
+- Added SVG validation: width and height must be specified (in SVG string/element or `svg` node)
+- Added support for image scaling with only `height` defined
+- Added custom `markerColor` for each item of `ul` and `ol`
+
+## 0.2.22 - 2026-01-07
+
+- Added object type validation for parameters in method `createPdf` and `createPdfKitDocument`
+- Added support `SVGElement` object for `svg` node (`SVGElement` object is available only in browser)
+- Fixed rendering SVG without viewBox
+
+## 0.2.21 - 2025-12-22
+
+- Added `wordBreak` property for `text` node, supported values: `'normal'` (default), `'break-all'`
+- Update Roboto font (version 3.014)
+- Fixed render empty list entries
 
 ## 0.2.20 - 2025-05-09
 

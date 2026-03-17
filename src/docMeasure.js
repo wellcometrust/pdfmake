@@ -168,8 +168,10 @@ DocMeasure.prototype.measureImageWithDimensions = function (node, dimensions) {
 		node._width = node._minWidth = node._maxWidth = node.cover.width;
 		node._height = node._minHeight = node._maxHeight = node.cover.height;
 	} else {
-		node._width = node._minWidth = node._maxWidth = node.width || dimensions.width;
-		node._height = node.height || (dimensions.height * node._width / dimensions.width);
+		var ratio = dimensions.width / dimensions.height;
+
+		node._width = node._minWidth = node._maxWidth = node.width || (node.height ? (node.height * ratio) : dimensions.width);
+		node._height = node.height || (node.width ? node.width / ratio : dimensions.height);
 
 		if (isNumber(node.maxWidth) && node.maxWidth < node._width) {
 			node._width = node._minWidth = node._maxWidth = node.maxWidth;
@@ -214,6 +216,15 @@ DocMeasure.prototype.measureSVG = function (node) {
 	this.measureImageWithDimensions(node, dimensions);
 
 	node.font = this.styleStack.getProperty('font');
+
+	// SVG requires a defined width and height
+	if (!isNumber(node._width) && !isNumber(node._height)) {
+		throw new Error('SVG is missing defined width and height.');
+	} else if (!isNumber(node._width)) {
+		throw new Error('SVG is missing defined width.');
+	} else if (!isNumber(node._height)) {
+		throw new Error('SVG is missing defined height.');
+	}
 
 	// scale SVG based on final dimension
 	node.svg = this.svgMeasure.writeDimensions(node.svg, {
@@ -302,7 +313,7 @@ DocMeasure.prototype.gapSizeForList = function () {
 	return this.textTools.sizeOfString('9. ', this.styleStack);
 };
 
-DocMeasure.prototype.buildUnorderedMarker = function (styleStack, gapSize, type) {
+DocMeasure.prototype.buildUnorderedMarker = function (item, styleStack, gapSize, type) {
 	function buildDisc(gapSize, color) {
 		// TODO: ascender-based calculations
 		var radius = gapSize.fontSize / 6;
@@ -349,7 +360,7 @@ DocMeasure.prototype.buildUnorderedMarker = function (styleStack, gapSize, type)
 	}
 
 	var marker;
-	var color = styleStack.getProperty('markerColor') || styleStack.getProperty('color') || 'black';
+	var color = TextTools.getStyleProperty(item, styleStack, 'markerColor', undefined) || styleStack.getProperty('color') || 'black';
 
 	switch (type) {
 		case 'circle':
@@ -376,7 +387,7 @@ DocMeasure.prototype.buildUnorderedMarker = function (styleStack, gapSize, type)
 	return marker;
 };
 
-DocMeasure.prototype.buildOrderedMarker = function (counter, styleStack, type, separator) {
+DocMeasure.prototype.buildOrderedMarker = function (item, counter, styleStack, type, separator) {
 	function prepareAlpha(counter) {
 		function toAlpha(num) {
 			return (num >= 26 ? toAlpha((num / 26 >> 0) - 1) : '') + 'abcdefghijklmnopqrstuvwxyz'[num % 26 >> 0];
@@ -455,11 +466,11 @@ DocMeasure.prototype.buildOrderedMarker = function (counter, styleStack, type, s
 		}
 	}
 
-	var textArray = { text: counterText };
-	var markerColor = styleStack.getProperty('markerColor');
-	if (markerColor) {
-		textArray.color = markerColor;
-	}
+	var markerColor = TextTools.getStyleProperty(item, styleStack, 'markerColor', undefined) || styleStack.getProperty('color') || 'black';
+	var textArray = {
+		text: counterText,
+		color: markerColor
+	};
 
 	return { _inlines: this.textTools.buildInlines(textArray, styleStack).items };
 };
@@ -476,7 +487,7 @@ DocMeasure.prototype.measureUnorderedList = function (node) {
 		var item = items[i] = this.measureNode(items[i]);
 
 		if (!item.ol && !item.ul) {
-			item.listMarker = this.buildUnorderedMarker(style, node._gapSize, item.listType || node.type);
+			item.listMarker = this.buildUnorderedMarker(item, style, node._gapSize, item.listType || node.type);
 		}
 
 		node._minWidth = Math.max(node._minWidth, items[i]._minWidth + node._gapSize.width);
@@ -505,7 +516,7 @@ DocMeasure.prototype.measureOrderedList = function (node) {
 
 		if (!item.ol && !item.ul) {
 			var counterValue = isNumber(item.counter) ? item.counter : counter;
-			item.listMarker = this.buildOrderedMarker(counterValue, style, item.listType || node.type, node.separator);
+			item.listMarker = this.buildOrderedMarker(item, counterValue, style, item.listType || node.type, node.separator);
 			if (item.listMarker._inlines) {
 				node._gapSize.width = Math.max(node._gapSize.width, item.listMarker._inlines[0].width);
 			}
