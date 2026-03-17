@@ -414,7 +414,9 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 		var page = pages[i];
 		let isOpenBlock = false;
+		var openStructType = null;
 		var blockItem;
+		var labelItem;
 		var blockContent;
 		var listBlockItem = null;
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
@@ -465,6 +467,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 						if(!isOpenBlock && structType) {
 						
 							blockItem = pdfKitDoc.struct(structType);
+							openStructType = structType;
 
 							if (structType === 'LI') {
 								if (!listBlockItem) {
@@ -472,14 +475,22 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 									pageSection.add(listBlockItem);
 								}
 								listBlockItem.add(blockItem);
+								labelItem = pdfKitDoc.struct('Lbl');
+								blockItem.add(labelItem);
 							} else {
 								pageSection.add(blockItem);
 							}
 
-							blockContent = pdfKitDoc.markStructureContent(structType);
-							blockItem.add(blockContent);
+							if (structType === 'LI') {
+								blockContent = pdfKitDoc.markStructureContent('Lbl');
+								labelItem.add(blockContent);
+								pdfKitDoc.markContent('Lbl');
+							} else {
+								blockContent = pdfKitDoc.markStructureContent(structType);
+								blockItem.add(blockContent);
+								pdfKitDoc.markContent(structType);
+							}
 							isOpenBlock = true;
-							pdfKitDoc.markContent(structType);
 						}
 					
 						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
@@ -488,8 +499,13 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 						// This allows multiple lines to be grouped into a single block structure.
 						if (isOpenBlock && item.item.lastLineInParagraph) {
 							pdfKitDoc.endMarkedContent();
+							if (openStructType === 'LI' && labelItem) {
+								labelItem.end();
+								labelItem = null;
+							}
 							blockItem.end();
 							isOpenBlock = false;
+							openStructType = null;
 						}
 					}
 					break;
