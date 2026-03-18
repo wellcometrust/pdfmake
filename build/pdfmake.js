@@ -16244,7 +16244,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 58150:
+/***/ 69599:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55824,7 +55824,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(68039);
+var FileSaver = __webpack_require__(38930);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58780,7 +58780,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(58150));
+var PdfKit = _interopDefault(__webpack_require__(69599));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59294,9 +59294,25 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		}
 
 		function renderFigure(item, renderFn) {
+			var hasAltText = item.item && item.item.alt !== undefined && item.item.alt !== null;
+			var hasActualText = item.item && item.item.actualText !== undefined && item.item.actualText !== null;
+			if (!hasAltText && !hasActualText) {
+				pdfKitDoc.markContent('Artifact', { type: "Layout" });
+				renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+				return;
+			}
+
 			ensureSect();
 
-			var figure = pdfKitDoc.struct('Figure');
+			var figureOptions = {};
+			if (hasAltText) {
+				figureOptions.alt = item.item.alt;
+			}
+			if (hasActualText) {
+				figureOptions.actual = item.item.actualText;
+			}
+
+			var figure = pdfKitDoc.struct('Figure', figureOptions);
 			var figureGroup = null;
 
 			if (isInToc) {
@@ -62131,7 +62147,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 68039:
+/***/ 38930:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),
