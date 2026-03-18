@@ -409,8 +409,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			updatePageOrientationInOptions(pages[i], pdfKitDoc);
 			pdfKitDoc.addPage(pdfKitDoc.options);
 		}
-		pageSection = pdfKitDoc.struct('Sect');
-		pdfDocument.add(pageSection);
+		pageSection = null;
 
 		var page = pages[i];
 		let isOpenBlock = false;
@@ -419,8 +418,48 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		var labelItem;
 		var blockContent;
 		var listBlockItem = null;
+		var isInToc = false;
+		var tocGroupItem = null;
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
+			var itemNodeName = item.item && item.item._node && item.item._node.nodeName;
+			var hasPermittedBlockNode = permittedBlockElements.includes(itemNodeName);
+			var itemStyles = item.item && item.item._node && item.item._node.style ? item.item._node.style : [];
+			var isTocItem = itemStyles.includes('tocItem');
+
+			if (isTocItem && !isInToc) {
+				pageSection = pdfKitDoc.struct('TOC');
+				pdfDocument.add(pageSection);
+				isInToc = true;
+			}
+
+			if (!isTocItem && isInToc && hasPermittedBlockNode) {
+				if (isOpenBlock) {
+					pdfKitDoc.endMarkedContent();
+					if (openStructType === 'LI' && labelItem) {
+						labelItem.end();
+						labelItem = null;
+					}
+					blockItem.end();
+					blockItem = null;
+					isOpenBlock = false;
+					openStructType = null;
+				}
+
+				if (listBlockItem) {
+					listBlockItem.end();
+					listBlockItem = null;
+				}
+
+				if (tocGroupItem) {
+					tocGroupItem.end();
+					tocGroupItem = null;
+				}
+
+				pageSection.end();
+				pageSection = null;
+				isInToc = false;
+			}
 			
 			// For items other than lines, mark the content as an Artifact so it's
 			// not included in the document structure.
@@ -441,6 +480,11 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 							structType = nodeName;
 						} else if (item.item._node) {
 							structType = 'P';
+						}
+
+						if (!isInToc && !pageSection && hasPermittedBlockNode) {
+							pageSection = pdfKitDoc.struct('Sect');
+							pdfDocument.add(pageSection);
 						}
 
 						// Extract the text array from nodeInfo if available, to check for list item styling.
@@ -464,33 +508,45 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 						}
 
 						// If we don't have an open block, open one now.
-						if(!isOpenBlock && structType) {
+						if(!isOpenBlock && structType && pageSection) {
 						
 							blockItem = pdfKitDoc.struct(structType);
 							openStructType = structType;
+							if (isInToc) {
+								tocGroupItem = pdfKitDoc.struct('TOCI');
+								pageSection.add(tocGroupItem);
+							}
 
 							if (structType === 'LI') {
 								if (!listBlockItem) {
 									listBlockItem = pdfKitDoc.struct('L');
-									pageSection.add(listBlockItem);
+									if (isInToc && tocGroupItem) {
+										tocGroupItem.add(listBlockItem);
+									} else {
+										pageSection.add(listBlockItem);
+									}
 								}
 								listBlockItem.add(blockItem);
 								labelItem = pdfKitDoc.struct('Lbl');
 								blockItem.add(labelItem);
 							} else {
-								pageSection.add(blockItem);
-							}
-
-							if (structType === 'LI') {
-								blockContent = pdfKitDoc.markStructureContent('Lbl');
-								labelItem.add(blockContent);
-								pdfKitDoc.markContent('Lbl');
-							} else {
-								blockContent = pdfKitDoc.markStructureContent(structType);
-								blockItem.add(blockContent);
-								pdfKitDoc.markContent(structType);
+								if (isInToc && tocGroupItem) {
+									tocGroupItem.add(blockItem);
+								} else {
+									pageSection.add(blockItem);
+								}
 							}
 							isOpenBlock = true;
+						}
+
+						if (isOpenBlock && structType === 'LI' && blockItem && labelItem) {
+							blockContent = pdfKitDoc.markStructureContent('Lbl');
+							labelItem.add(blockContent);
+							pdfKitDoc.markContent('Lbl');
+						} else if (isOpenBlock && structType && blockItem) {
+							blockContent = pdfKitDoc.markStructureContent(structType);
+							blockItem.add(blockContent);
+							pdfKitDoc.markContent(structType);
 						}
 					
 						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
@@ -504,18 +560,67 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 								labelItem = null;
 							}
 							blockItem.end();
+							blockItem = null;
 							isOpenBlock = false;
 							openStructType = null;
+							if (isInToc && tocGroupItem) {
+								if (listBlockItem) {
+									listBlockItem.end();
+									listBlockItem = null;
+								}
+								tocGroupItem.end();
+								tocGroupItem = null;
+							}
 						}
 					}
 					break;
 				case 'image':
-					pdfKitDoc.markContent('Artifact', { type: "Layout" });
+					if (!isInToc && !pageSection) {
+						pageSection = pdfKitDoc.struct('Sect');
+						pdfDocument.add(pageSection);
+					}
+					var imageFigure = pdfKitDoc.struct('Figure');
+					var imageTocGroup = null;
+					if (isInToc) {
+						imageTocGroup = pdfKitDoc.struct('TOCI');
+						pageSection.add(imageTocGroup);
+						imageTocGroup.add(imageFigure);
+					} else {
+						pageSection.add(imageFigure);
+					}
+					blockContent = pdfKitDoc.markStructureContent('Figure');
+					imageFigure.add(blockContent);
+					pdfKitDoc.markContent('Figure');
 					renderImage(item.item, item.item.x, item.item.y, pdfKitDoc);
+					pdfKitDoc.endMarkedContent();
+					imageFigure.end();
+					if (imageTocGroup) {
+						imageTocGroup.end();
+					}
 					break;
 				case 'svg':
-					pdfKitDoc.markContent('Artifact', { type: "Layout" });
+					if (!isInToc && !pageSection) {
+						pageSection = pdfKitDoc.struct('Sect');
+						pdfDocument.add(pageSection);
+					}
+					var svgFigure = pdfKitDoc.struct('Figure');
+					var svgTocGroup = null;
+					if (isInToc) {
+						svgTocGroup = pdfKitDoc.struct('TOCI');
+						pageSection.add(svgTocGroup);
+						svgTocGroup.add(svgFigure);
+					} else {
+						pageSection.add(svgFigure);
+					}
+					blockContent = pdfKitDoc.markStructureContent('Figure');
+					svgFigure.add(blockContent);
+					pdfKitDoc.markContent('Figure');
 					renderSVG(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+					pdfKitDoc.endMarkedContent();
+					svgFigure.end();
+					if (svgTocGroup) {
+						svgTocGroup.end();
+					}
 					break;
 				case 'beginClip':
 					pdfKitDoc.markContent('Artifact', { type: "Layout" });
@@ -532,6 +637,15 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		if (listBlockItem) {
 			listBlockItem.end();
 			listBlockItem = null;
+		}
+		if (tocGroupItem) {
+			tocGroupItem.end();
+			tocGroupItem = null;
+		}
+		if (isInToc) {
+			pageSection.end();
+			pageSection = null;
+			isInToc = false;
 		}
 		if (page.watermark) {
 			renderWatermark(page, pdfKitDoc);
