@@ -1,4 +1,4 @@
-/*! @wellcometrust/pdfmake v1.1.1, @license MIT, @link https://github.com/wellcometrust/pdfmake#readme */
+/*! @wellcometrust/pdfmake v1.2.0, @license MIT, @link https://github.com/wellcometrust/pdfmake#readme */
 (function webpackUniversalModuleDefinition(root, factory) {
 	if(typeof exports === 'object' && typeof module === 'object')
 		module.exports = factory();
@@ -16244,7 +16244,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 69719:
+/***/ 58150:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55824,7 +55824,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(34802);
+var FileSaver = __webpack_require__(68039);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58780,7 +58780,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(69719));
+var PdfKit = _interopDefault(__webpack_require__(58150));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59224,6 +59224,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		var listBlockItem = null;
 		var isInToc = false;
 		var tocGroupItem = null;
+		var previousStructType = null;
 
 		function createPageSection(type) {
 			pageSection = pdfKitDoc.struct(type);
@@ -59366,6 +59367,12 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 				case 'line':
 					{
 						var structType = deriveLineStructType(item);
+						var hasInlines = Array.isArray(item.item && item.item.inlines) && item.item.inlines.length > 0;
+						var hasExplicitLastLineInParagraph = typeof item.item.lastLineInParagraph === 'boolean';
+
+						if (!structType && hasInlines && hasExplicitLastLineInParagraph) {
+							structType = previousStructType;
+						}
 
 						if (!isInToc && hasPermittedBlockNode) {
 							ensureSect();
@@ -59419,6 +59426,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 						}
 					
 						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
+
+						if (structType) {
+							previousStructType = structType;
+						}
 
 						// If this line is the last in the block, close the block.
 						// This allows multiple lines to be grouped into a single block structure.
@@ -62120,7 +62131,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 34802:
+/***/ 68039:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),
