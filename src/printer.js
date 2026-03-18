@@ -403,23 +403,138 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	progressCallback = progressCallback || function () {
 	};
 
-	var pageSection;
 	for (var i = 0; i < pages.length; i++) {
 		if (i > 0) {
 			updatePageOrientationInOptions(pages[i], pdfKitDoc);
 			pdfKitDoc.addPage(pdfKitDoc.options);
 		}
-		pageSection = null;
 
 		var page = pages[i];
-		let isOpenBlock = false;
+		var pageSection = null;
+		var isOpenBlock = false;
 		var openStructType = null;
-		var blockItem;
-		var labelItem;
+		var blockItem = null;
+		var labelItem = null;
 		var blockContent;
 		var listBlockItem = null;
 		var isInToc = false;
 		var tocGroupItem = null;
+
+		function createPageSection(type) {
+			pageSection = pdfKitDoc.struct(type);
+			pdfDocument.add(pageSection);
+		}
+
+		function ensureSect() {
+			if (!isInToc && !pageSection) {
+				createPageSection('Sect');
+			}
+		}
+
+		function closeListBlock() {
+			if (listBlockItem) {
+				listBlockItem.end();
+				listBlockItem = null;
+			}
+		}
+
+		function closeTocGroup() {
+			if (tocGroupItem) {
+				tocGroupItem.end();
+				tocGroupItem = null;
+			}
+		}
+
+		function closeOpenBlock() {
+			if (!isOpenBlock) {
+				return;
+			}
+
+			pdfKitDoc.endMarkedContent();
+			if (openStructType === 'LI' && labelItem) {
+				labelItem.end();
+				labelItem = null;
+			}
+
+			if (blockItem) {
+				blockItem.end();
+			}
+
+			blockItem = null;
+			isOpenBlock = false;
+			openStructType = null;
+
+			if (isInToc && tocGroupItem) {
+				closeListBlock();
+				closeTocGroup();
+			}
+		}
+
+		function closeTocSection() {
+			if (!isInToc) {
+				return;
+			}
+
+			closeOpenBlock();
+			closeListBlock();
+			closeTocGroup();
+
+			if (pageSection) {
+				pageSection.end();
+			}
+
+			pageSection = null;
+			isInToc = false;
+		}
+
+		function renderFigure(item, renderFn) {
+			ensureSect();
+
+			var figure = pdfKitDoc.struct('Figure');
+			var figureGroup = null;
+
+			if (isInToc) {
+				figureGroup = pdfKitDoc.struct('TOCI');
+				pageSection.add(figureGroup);
+				figureGroup.add(figure);
+			} else {
+				pageSection.add(figure);
+			}
+
+			blockContent = pdfKitDoc.markStructureContent('Figure');
+			figure.add(blockContent);
+			pdfKitDoc.markContent('Figure');
+			renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+			pdfKitDoc.endMarkedContent();
+			figure.end();
+
+			if (figureGroup) {
+				figureGroup.end();
+			}
+		}
+
+		function deriveLineStructType(item) {
+			var node = item.item && item.item._node;
+			if (!node) {
+				return null;
+			}
+
+			var structType = permittedBlockElements.includes(node.nodeName) ? node.nodeName : 'P';
+			var nodeInfoTextArray = node.nodeInfo && Array.isArray(node.nodeInfo.text) ? node.nodeInfo.text : null;
+
+			if (Array.isArray(nodeInfoTextArray)) {
+				var isListItem = nodeInfoTextArray.some(function (text) {
+					return Array.isArray(text.style) && text.style.includes('html-li');
+				});
+
+				if (isListItem) {
+					structType = 'LI';
+				}
+			}
+
+			return structType;
+		}
+
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
 			var itemNodeName = item.item && item.item._node && item.item._node.nodeName;
@@ -428,37 +543,12 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			var isTocItem = itemStyles.includes('tocItem');
 
 			if (isTocItem && !isInToc) {
-				pageSection = pdfKitDoc.struct('TOC');
-				pdfDocument.add(pageSection);
+				createPageSection('TOC');
 				isInToc = true;
 			}
 
 			if (!isTocItem && isInToc && hasPermittedBlockNode) {
-				if (isOpenBlock) {
-					pdfKitDoc.endMarkedContent();
-					if (openStructType === 'LI' && labelItem) {
-						labelItem.end();
-						labelItem = null;
-					}
-					blockItem.end();
-					blockItem = null;
-					isOpenBlock = false;
-					openStructType = null;
-				}
-
-				if (listBlockItem) {
-					listBlockItem.end();
-					listBlockItem = null;
-				}
-
-				if (tocGroupItem) {
-					tocGroupItem.end();
-					tocGroupItem = null;
-				}
-
-				pageSection.end();
-				pageSection = null;
-				isInToc = false;
+				closeTocSection();
 			}
 			
 			// For items other than lines, mark the content as an Artifact so it's
@@ -470,41 +560,15 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 					break;
 				case 'line':
 					{
-						// Extract the nodeName to determine the structural type - default to paragraph
-						// if not present or not a permitted block element.		
-						var nodeName = item.item._node && item.item._node.nodeName;
-						var structType = null;
-						// Only consider permitted block elements as structural elements. 
-						// If the nodeName is not a permitted block element but the line has an associated node, treat it as a paragraph to ensure it's included in the structure.
-						if (permittedBlockElements.includes(nodeName)) {
-							structType = nodeName;
-						} else if (item.item._node) {
-							structType = 'P';
-						}
+						var structType = deriveLineStructType(item);
 
-						if (!isInToc && !pageSection && hasPermittedBlockNode) {
-							pageSection = pdfKitDoc.struct('Sect');
-							pdfDocument.add(pageSection);
-						}
-
-						// Extract the text array from nodeInfo if available, to check for list item styling.
-						var nodeInfoTextArray = null;
-						if (item.item._node && item.item._node.nodeInfo &&Array.isArray(item.item._node.nodeInfo.text)) {
-							nodeInfoTextArray = item.item._node.nodeInfo.text;
-						}
-
-						// For nested lists, we need to check if any of the text elements in the line have the "html-li" style applied, because the parent node does not have a type.
-						if (Array.isArray(nodeInfoTextArray)) {
-							const isListItem = nodeInfoTextArray.some(text => Array.isArray(text.style) && text.style.includes("html-li"));
-							if (isListItem) {
-								structType = 'LI';
-							}
+						if (!isInToc && hasPermittedBlockNode) {
+							ensureSect();
 						}
 
 						// If we are in a list and encounter a non-list item, we need to close the list block.
 						if (structType && structType !== 'LI'  && listBlockItem) {
-							listBlockItem.end();
-							listBlockItem = null;
+							closeListBlock();
 						}
 
 						// If we don't have an open block, open one now.
@@ -554,73 +618,19 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 						// If this line is the last in the block, close the block.
 						// This allows multiple lines to be grouped into a single block structure.
 						if (isOpenBlock && item.item.lastLineInParagraph) {
-							pdfKitDoc.endMarkedContent();
-							if (openStructType === 'LI' && labelItem) {
-								labelItem.end();
-								labelItem = null;
-							}
-							blockItem.end();
-							blockItem = null;
-							isOpenBlock = false;
-							openStructType = null;
-							if (isInToc && tocGroupItem) {
-								if (listBlockItem) {
-									listBlockItem.end();
-									listBlockItem = null;
-								}
-								tocGroupItem.end();
-								tocGroupItem = null;
-							}
+							closeOpenBlock();
 						}
 					}
 					break;
 				case 'image':
-					if (!isInToc && !pageSection) {
-						pageSection = pdfKitDoc.struct('Sect');
-						pdfDocument.add(pageSection);
-					}
-					var imageFigure = pdfKitDoc.struct('Figure');
-					var imageTocGroup = null;
-					if (isInToc) {
-						imageTocGroup = pdfKitDoc.struct('TOCI');
-						pageSection.add(imageTocGroup);
-						imageTocGroup.add(imageFigure);
-					} else {
-						pageSection.add(imageFigure);
-					}
-					blockContent = pdfKitDoc.markStructureContent('Figure');
-					imageFigure.add(blockContent);
-					pdfKitDoc.markContent('Figure');
-					renderImage(item.item, item.item.x, item.item.y, pdfKitDoc);
-					pdfKitDoc.endMarkedContent();
-					imageFigure.end();
-					if (imageTocGroup) {
-						imageTocGroup.end();
-					}
+					renderFigure(item, function (image, x, y, doc) {
+						renderImage(image, x, y, doc);
+					});
 					break;
 				case 'svg':
-					if (!isInToc && !pageSection) {
-						pageSection = pdfKitDoc.struct('Sect');
-						pdfDocument.add(pageSection);
-					}
-					var svgFigure = pdfKitDoc.struct('Figure');
-					var svgTocGroup = null;
-					if (isInToc) {
-						svgTocGroup = pdfKitDoc.struct('TOCI');
-						pageSection.add(svgTocGroup);
-						svgTocGroup.add(svgFigure);
-					} else {
-						pageSection.add(svgFigure);
-					}
-					blockContent = pdfKitDoc.markStructureContent('Figure');
-					svgFigure.add(blockContent);
-					pdfKitDoc.markContent('Figure');
-					renderSVG(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
-					pdfKitDoc.endMarkedContent();
-					svgFigure.end();
-					if (svgTocGroup) {
-						svgTocGroup.end();
-					}
+					renderFigure(item, function (svg, x, y, doc) {
+						renderSVG(svg, x, y, doc, fontProvider);
+					});
 					break;
 				case 'beginClip':
 					pdfKitDoc.markContent('Artifact', { type: "Layout" });
@@ -634,19 +644,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			renderedItems++;
 			progressCallback(renderedItems / totalItems);
 		}
-		if (listBlockItem) {
-			listBlockItem.end();
-			listBlockItem = null;
-		}
-		if (tocGroupItem) {
-			tocGroupItem.end();
-			tocGroupItem = null;
-		}
-		if (isInToc) {
-			pageSection.end();
-			pageSection = null;
-			isInToc = false;
-		}
+		closeOpenBlock();
+		closeListBlock();
+		closeTocGroup();
+		closeTocSection();
 		if (page.watermark) {
 			renderWatermark(page, pdfKitDoc);
 		}
