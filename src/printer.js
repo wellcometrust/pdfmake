@@ -403,261 +403,282 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	progressCallback = progressCallback || function () {
 	};
 
+	var page;
+	var pageSection = null;
+	var isOpenBlock = false;
+	var openStructType = null;
+	var blockItem = null;
+	var labelItem = null;
+	var blockContent;
+	var listBlockItem = null;
+	var isInToc = false;
+	var tocGroupItem = null;
+	var previousStructType = null;
+
+	// Table structure state
+	var tableStruct = null;
+	var theadStruct = null;
+	var tbodyStruct = null;
+	var currentTR = null;
+	var currentCell = null;
+	var currentTableRef = null;
+	var currentRowIndex = null;
+	var currentColIndex = null;
+
+	function createPageSection(type) {
+		pageSection = pdfKitDoc.struct(type);
+		pdfDocument.add(pageSection);
+	}
+
+	function ensureSect() {
+		if (!isInToc && !pageSection) {
+			createPageSection('Sect');
+		}
+	}
+
+	function closeListBlock() {
+		if (listBlockItem) {
+			listBlockItem.end();
+			listBlockItem = null;
+		}
+	}
+
+	function closeTocGroup() {
+		if (tocGroupItem) {
+			tocGroupItem.end();
+			tocGroupItem = null;
+		}
+	}
+
+	function closeOpenBlock() {
+		if (!isOpenBlock) {
+			return;
+		}
+
+		pdfKitDoc.endMarkedContent();
+		if (openStructType === 'LI' && labelItem) {
+			labelItem.end();
+			labelItem = null;
+		}
+
+		if (blockItem) {
+			blockItem.end();
+		}
+
+		blockItem = null;
+		isOpenBlock = false;
+		openStructType = null;
+
+		if (isInToc && tocGroupItem) {
+			closeListBlock();
+			closeTocGroup();
+		}
+	}
+
+	function closeTocSection() {
+		if (!isInToc) {
+			return;
+		}
+
+		closeOpenBlock();
+		closeListBlock();
+		closeTocGroup();
+
+		if (pageSection) {
+			pageSection.end();
+		}
+
+		pageSection = null;
+		isInToc = false;
+	}
+
+	function closeTableCell() {
+		if (!currentCell) {
+			return;
+		}
+		closeOpenBlock();
+		closeListBlock();
+		currentCell.end();
+		currentCell = null;
+		currentColIndex = null;
+	}
+
+	function closeTableRow() {
+		if (!currentTR) {
+			return;
+		}
+		closeTableCell();
+		currentTR.end();
+		currentTR = null;
+		currentRowIndex = null;
+	}
+
+	function closeTableHeaderGroup() {
+		if (!theadStruct) {
+			return;
+		}
+		closeTableRow();
+		theadStruct.end();
+		theadStruct = null;
+	}
+
+	function closeTableBodyGroup() {
+		if (!tbodyStruct) {
+			return;
+		}
+		closeTableRow();
+		tbodyStruct.end();
+		tbodyStruct = null;
+	}
+
+	function closeTable() {
+		if (!tableStruct) {
+			return;
+		}
+		closeTableHeaderGroup();
+		closeTableBodyGroup();
+		tableStruct.end();
+		tableStruct = null;
+		currentTableRef = null;
+		currentRowIndex = null;
+		currentColIndex = null;
+	}
+
+	function openTable(tableRef) {
+		ensureSect();
+		tableStruct = pdfKitDoc.struct('Table');
+		pageSection.add(tableStruct);
+		currentTableRef = tableRef;
+	}
+
+	function openTableRow(rowIndex, isHeader) {
+		if (isHeader) {
+			if (!theadStruct) {
+				theadStruct = pdfKitDoc.struct('THead');
+				tableStruct.add(theadStruct);
+			}
+			currentTR = pdfKitDoc.struct('TR');
+			theadStruct.add(currentTR);
+		} else {
+			if (!tbodyStruct) {
+				closeTableHeaderGroup();
+				tbodyStruct = pdfKitDoc.struct('TBody');
+				tableStruct.add(tbodyStruct);
+			}
+			currentTR = pdfKitDoc.struct('TR');
+			tbodyStruct.add(currentTR);
+		}
+		currentRowIndex = rowIndex;
+	}
+
+	function openTableCellElement(colIndex, isHeader) {
+		currentCell = pdfKitDoc.struct(isHeader ? 'TH' : 'TD');
+		currentTR.add(currentCell);
+		currentColIndex = colIndex;
+	}
+
+	function getContentParent() {
+		if (currentCell) {
+			return currentCell;
+		}
+		if (isInToc && tocGroupItem) {
+			return tocGroupItem;
+		}
+		return pageSection;
+	}
+
+	function renderFigure(item, renderFn) {
+		var hasAltText = item.item && item.item.alt !== undefined && item.item.alt !== null;
+		var hasActualText = item.item && item.item.actualText !== undefined && item.item.actualText !== null;
+		if (!hasAltText && !hasActualText) {
+			pdfKitDoc.markContent('Artifact', { type: "Layout" });
+			renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+			return;
+		}
+
+		ensureSect();
+
+		var figureOptions = {};
+		if (hasAltText) {
+			figureOptions.alt = item.item.alt;
+		}
+		if (hasActualText) {
+			figureOptions.actual = item.item.actualText;
+		}
+
+		var figure = pdfKitDoc.struct('Figure', figureOptions);
+		var figureGroup = null;
+		var parent = getContentParent();
+
+		if (isInToc) {
+			figureGroup = pdfKitDoc.struct('TOCI');
+			parent.add(figureGroup);
+			figureGroup.add(figure);
+		} else {
+			parent.add(figure);
+		}
+
+		blockContent = pdfKitDoc.markStructureContent('Figure');
+		figure.add(blockContent);
+		pdfKitDoc.markContent('Figure');
+		renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+		pdfKitDoc.endMarkedContent();
+		figure.end();
+
+		if (figureGroup) {
+			figureGroup.end();
+		}
+	}
+
+	function deriveLineStructType(item) {
+		var node = item.item && item.item._node;
+		if (!node) {
+			return null;
+		}
+
+		var structType = permittedBlockElements.includes(node.nodeName) ? node.nodeName : 'P';
+		var nodeInfoTextArray = node.nodeInfo && Array.isArray(node.nodeInfo.text) ? node.nodeInfo.text : null;
+
+		if (Array.isArray(nodeInfoTextArray)) {
+			var isListItem = nodeInfoTextArray.some(function (text) {
+				return Array.isArray(text.style) && text.style.includes('html-li');
+			});
+
+			if (isListItem) {
+				structType = 'LI';
+			}
+		}
+
+		return structType;
+	}
+
 	for (var i = 0; i < pages.length; i++) {
 		if (i > 0) {
 			updatePageOrientationInOptions(pages[i], pdfKitDoc);
 			pdfKitDoc.addPage(pdfKitDoc.options);
 		}
 
-		var page = pages[i];
-		var pageSection = null;
-		var isOpenBlock = false;
-		var openStructType = null;
-		var blockItem = null;
-		var labelItem = null;
-		var blockContent;
-		var listBlockItem = null;
-		var isInToc = false;
-		var tocGroupItem = null;
-		var previousStructType = null;
+		page = pages[i];
+		pageSection = null;
+		isOpenBlock = false;
+		openStructType = null;
+		blockItem = null;
+		labelItem = null;
+		blockContent = undefined;
+		listBlockItem = null;
+		isInToc = false;
+		tocGroupItem = null;
+		previousStructType = null;
 
 		// Table structure state
-		var tableStruct = null;
-		var theadStruct = null;
-		var tbodyStruct = null;
-		var currentTR = null;
-		var currentCell = null;
-		var currentTableRef = null;
-		var currentRowIndex = null;
-		var currentColIndex = null;
-
-		function createPageSection(type) {
-			pageSection = pdfKitDoc.struct(type);
-			pdfDocument.add(pageSection);
-		}
-
-		function ensureSect() {
-			if (!isInToc && !pageSection) {
-				createPageSection('Sect');
-			}
-		}
-
-		function closeListBlock() {
-			if (listBlockItem) {
-				listBlockItem.end();
-				listBlockItem = null;
-			}
-		}
-
-		function closeTocGroup() {
-			if (tocGroupItem) {
-				tocGroupItem.end();
-				tocGroupItem = null;
-			}
-		}
-
-		function closeOpenBlock() {
-			if (!isOpenBlock) {
-				return;
-			}
-
-			pdfKitDoc.endMarkedContent();
-			if (openStructType === 'LI' && labelItem) {
-				labelItem.end();
-				labelItem = null;
-			}
-
-			if (blockItem) {
-				blockItem.end();
-			}
-
-			blockItem = null;
-			isOpenBlock = false;
-			openStructType = null;
-
-			if (isInToc && tocGroupItem) {
-				closeListBlock();
-				closeTocGroup();
-			}
-		}
-
-		function closeTocSection() {
-			if (!isInToc) {
-				return;
-			}
-
-			closeOpenBlock();
-			closeListBlock();
-			closeTocGroup();
-
-			if (pageSection) {
-				pageSection.end();
-			}
-
-			pageSection = null;
-			isInToc = false;
-		}
-
-		function closeTableCell() {
-			if (!currentCell) {
-				return;
-			}
-			closeOpenBlock();
-			closeListBlock();
-			currentCell.end();
-			currentCell = null;
-			currentColIndex = null;
-		}
-
-		function closeTableRow() {
-			if (!currentTR) {
-				return;
-			}
-			closeTableCell();
-			currentTR.end();
-			currentTR = null;
-			currentRowIndex = null;
-		}
-
-		function closeTableHeaderGroup() {
-			if (!theadStruct) {
-				return;
-			}
-			closeTableRow();
-			theadStruct.end();
-			theadStruct = null;
-		}
-
-		function closeTableBodyGroup() {
-			if (!tbodyStruct) {
-				return;
-			}
-			closeTableRow();
-			tbodyStruct.end();
-			tbodyStruct = null;
-		}
-
-		function closeTable() {
-			if (!tableStruct) {
-				return;
-			}
-			closeTableHeaderGroup();
-			closeTableBodyGroup();
-			tableStruct.end();
-			tableStruct = null;
-			currentTableRef = null;
-			currentRowIndex = null;
-			currentColIndex = null;
-		}
-
-		function openTable(tableRef) {
-			ensureSect();
-			tableStruct = pdfKitDoc.struct('Table');
-			pageSection.add(tableStruct);
-			currentTableRef = tableRef;
-		}
-
-		function openTableRow(rowIndex, isHeader) {
-			if (isHeader) {
-				if (!theadStruct) {
-					theadStruct = pdfKitDoc.struct('THead');
-					tableStruct.add(theadStruct);
-				}
-				currentTR = pdfKitDoc.struct('TR');
-				theadStruct.add(currentTR);
-			} else {
-				if (!tbodyStruct) {
-					closeTableHeaderGroup();
-					tbodyStruct = pdfKitDoc.struct('TBody');
-					tableStruct.add(tbodyStruct);
-				}
-				currentTR = pdfKitDoc.struct('TR');
-				tbodyStruct.add(currentTR);
-			}
-			currentRowIndex = rowIndex;
-		}
-
-		function openTableCellElement(colIndex, isHeader) {
-			currentCell = pdfKitDoc.struct(isHeader ? 'TH' : 'TD');
-			currentTR.add(currentCell);
-			currentColIndex = colIndex;
-		}
-
-		function getContentParent() {
-			if (currentCell) {
-				return currentCell;
-			}
-			if (isInToc && tocGroupItem) {
-				return tocGroupItem;
-			}
-			return pageSection;
-		}
-
-		function renderFigure(item, renderFn) {
-			var hasAltText = item.item && item.item.alt !== undefined && item.item.alt !== null;
-			var hasActualText = item.item && item.item.actualText !== undefined && item.item.actualText !== null;
-			if (!hasAltText && !hasActualText) {
-				pdfKitDoc.markContent('Artifact', { type: "Layout" });
-				renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
-				return;
-			}
-
-			ensureSect();
-
-			var figureOptions = {};
-			if (hasAltText) {
-				figureOptions.alt = item.item.alt;
-			}
-			if (hasActualText) {
-				figureOptions.actual = item.item.actualText;
-			}
-
-			var figure = pdfKitDoc.struct('Figure', figureOptions);
-			var figureGroup = null;
-			var parent = getContentParent();
-
-			if (isInToc) {
-				figureGroup = pdfKitDoc.struct('TOCI');
-				parent.add(figureGroup);
-				figureGroup.add(figure);
-			} else {
-				parent.add(figure);
-			}
-
-			blockContent = pdfKitDoc.markStructureContent('Figure');
-			figure.add(blockContent);
-			pdfKitDoc.markContent('Figure');
-			renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
-			pdfKitDoc.endMarkedContent();
-			figure.end();
-
-			if (figureGroup) {
-				figureGroup.end();
-			}
-		}
-
-		function deriveLineStructType(item) {
-			var node = item.item && item.item._node;
-			if (!node) {
-				return null;
-			}
-
-			var structType = permittedBlockElements.includes(node.nodeName) ? node.nodeName : 'P';
-			var nodeInfoTextArray = node.nodeInfo && Array.isArray(node.nodeInfo.text) ? node.nodeInfo.text : null;
-
-			if (Array.isArray(nodeInfoTextArray)) {
-				var isListItem = nodeInfoTextArray.some(function (text) {
-					return Array.isArray(text.style) && text.style.includes('html-li');
-				});
-
-				if (isListItem) {
-					structType = 'LI';
-				}
-			}
-
-			return structType;
-		}
-		
+		tableStruct = null;
+		theadStruct = null;
+		tbodyStruct = null;
+		currentTR = null;
+		currentCell = null;
+		currentTableRef = null;
+		currentRowIndex = null;
+		currentColIndex = null;
 
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
