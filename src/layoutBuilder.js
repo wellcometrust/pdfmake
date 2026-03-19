@@ -885,7 +885,9 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 
 	var nextMarker;
 	this.tracker.auto('lineAdded', addMarkerToFirstLeaf, function () {
-		items.forEach(function (item) {
+		items.forEach(function (item, itemIndex) {
+			// Annotate list item nodes for accessibility tagging
+			annotateListItemNode(item, node, itemIndex);
 			nextMarker = item.listMarker;
 			self.processNode(item);
 			addAll(node.positions, item.positions);
@@ -893,6 +895,16 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 	});
 
 	this.writer.context().addMargin(-gapSize.width);
+
+	function annotateListItemNode(itemNode, listRef, itemIndex) {
+		itemNode._listRef = listRef;
+		itemNode._listItemIndex = itemIndex;
+		if (itemNode.stack) {
+			for (var si = 0; si < itemNode.stack.length; si++) {
+				annotateListItemNode(itemNode.stack[si], listRef, itemIndex);
+			}
+		}
+	}
 
 	function addMarkerToFirstLeaf(line) {
 		// I'm not very happy with the way list processing is implemented
@@ -905,12 +917,18 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 				var vector = marker.canvas[0];
 
 				offsetVector(vector, -marker._minWidth, 0);
+				vector._isListMarker = true;
+				vector._listRef = line._node ? line._node._listRef : null;
+				vector._listItemIndex = line._node ? line._node._listItemIndex : null;
 				self.writer.addVector(vector);
 			} else if (marker._inlines) {
 				var markerLine = new Line(self.pageSize.width);
 				markerLine.addInline(marker._inlines[0]);
 				markerLine.x = -marker._minWidth;
 				markerLine.y = line.getAscenderHeight() - markerLine.getAscenderHeight();
+				markerLine._isListMarker = true;
+				markerLine._listRef = line._node ? line._node._listRef : null;
+				markerLine._listItemIndex = line._node ? line._node._listItemIndex : null;
 				self.writer.addLine(markerLine, true);
 			}
 		}

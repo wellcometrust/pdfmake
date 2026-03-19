@@ -16021,13 +16021,24 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
   this.writer.context().addMargin(gapSize.width);
   var nextMarker;
   this.tracker.auto('lineAdded', addMarkerToFirstLeaf, function () {
-    items.forEach(function (item) {
+    items.forEach(function (item, itemIndex) {
+      // Annotate list item nodes for accessibility tagging
+      annotateListItemNode(item, node, itemIndex);
       nextMarker = item.listMarker;
       self.processNode(item);
       addAll(node.positions, item.positions);
     });
   });
   this.writer.context().addMargin(-gapSize.width);
+  function annotateListItemNode(itemNode, listRef, itemIndex) {
+    itemNode._listRef = listRef;
+    itemNode._listItemIndex = itemIndex;
+    if (itemNode.stack) {
+      for (var si = 0; si < itemNode.stack.length; si++) {
+        annotateListItemNode(itemNode.stack[si], listRef, itemIndex);
+      }
+    }
+  }
   function addMarkerToFirstLeaf(line) {
     // I'm not very happy with the way list processing is implemented
     // (both code and algorithm should be rethinked)
@@ -16037,12 +16048,18 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
       if (marker.canvas) {
         var vector = marker.canvas[0];
         offsetVector(vector, -marker._minWidth, 0);
+        vector._isListMarker = true;
+        vector._listRef = line._node ? line._node._listRef : null;
+        vector._listItemIndex = line._node ? line._node._listItemIndex : null;
         self.writer.addVector(vector);
       } else if (marker._inlines) {
         var markerLine = new Line(self.pageSize.width);
         markerLine.addInline(marker._inlines[0]);
         markerLine.x = -marker._minWidth;
         markerLine.y = line.getAscenderHeight() - markerLine.getAscenderHeight();
+        markerLine._isListMarker = true;
+        markerLine._listRef = line._node ? line._node._listRef : null;
+        markerLine._listItemIndex = line._node ? line._node._listItemIndex : null;
         self.writer.addLine(markerLine, true);
       }
     }
@@ -16268,7 +16285,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 70546:
+/***/ 44453:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55848,7 +55865,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(7372);
+var FileSaver = __webpack_require__(80392);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58804,7 +58821,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(70546));
+var PdfKit = _interopDefault(__webpack_require__(44453));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59237,9 +59254,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	var isOpenBlock = false;
 	var openStructType = null;
 	var blockItem = null;
-	var labelItem = null;
 	var blockContent;
-	var listBlockItem = null;
 	var isInToc = false;
 	var tocGroupItem = null;
 	var previousStructType = null;
@@ -59254,6 +59269,13 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	var currentRowIndex = null;
 	var currentColIndex = null;
 
+	// List structure state
+	var listStruct = null;
+	var currentLI = null;
+	var currentLbl = null;
+	var currentListRef = null;
+	var currentListItemIndex = null;
+
 	function createPageSection(type) {
 		pageSection = pdfKitDoc.struct(type);
 		pdfDocument.add(pageSection);
@@ -59262,13 +59284,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	function ensureSect() {
 		if (!isInToc && !pageSection) {
 			createPageSection('Sect');
-		}
-	}
-
-	function closeListBlock() {
-		if (listBlockItem) {
-			listBlockItem.end();
-			listBlockItem = null;
 		}
 	}
 
@@ -59285,10 +59300,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		}
 
 		pdfKitDoc.endMarkedContent();
-		if (openStructType === 'LI' && labelItem) {
-			labelItem.end();
-			labelItem = null;
-		}
 
 		if (blockItem) {
 			blockItem.end();
@@ -59299,7 +59310,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		openStructType = null;
 
 		if (isInToc && tocGroupItem) {
-			closeListBlock();
 			closeTocGroup();
 		}
 	}
@@ -59310,7 +59320,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		}
 
 		closeOpenBlock();
-		closeListBlock();
+		closeList();
 		closeTocGroup();
 
 		if (pageSection) {
@@ -59321,12 +59331,66 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		isInToc = false;
 	}
 
+	// --- List structure helpers ---
+
+	function closeListLabel() {
+		if (!currentLbl) {
+			return;
+		}
+		closeOpenBlock();
+		currentLbl.end();
+		currentLbl = null;
+	}
+
+	function closeListItem() {
+		if (!currentLI) {
+			return;
+		}
+		closeListLabel();
+		closeOpenBlock();
+		currentLI.end();
+		currentLI = null;
+		currentListItemIndex = null;
+	}
+
+	function closeList() {
+		if (!listStruct) {
+			return;
+		}
+		closeListItem();
+		listStruct.end();
+		listStruct = null;
+		currentListRef = null;
+	}
+
+	function openList(listRef) {
+		var parent = getContentParent();
+		listStruct = pdfKitDoc.struct('L');
+		if (isInToc && tocGroupItem) {
+			tocGroupItem.add(listStruct);
+		} else {
+			parent.add(listStruct);
+		}
+		currentListRef = listRef;
+	}
+
+	function openListItem(itemIndex) {
+		currentLI = pdfKitDoc.struct('LI');
+		listStruct.add(currentLI);
+		currentListItemIndex = itemIndex;
+		// Create label element — marker content will be added to it
+		currentLbl = pdfKitDoc.struct('Lbl');
+		currentLI.add(currentLbl);
+	}
+
+	// --- Table structure helpers ---
+
 	function closeTableCell() {
 		if (!currentCell) {
 			return;
 		}
 		closeOpenBlock();
-		closeListBlock();
+		closeList();
 		currentCell.end();
 		currentCell = null;
 		currentColIndex = null;
@@ -59410,6 +59474,9 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		if (currentCell) {
 			return currentCell;
 		}
+		if (currentLI) {
+			return currentLI;
+		}
 		if (isInToc && tocGroupItem) {
 			return tocGroupItem;
 		}
@@ -59465,20 +59532,29 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			return null;
 		}
 
-		var structType = permittedBlockElements.includes(node.nodeName) ? node.nodeName : 'P';
-		var nodeInfoTextArray = node.nodeInfo && Array.isArray(node.nodeInfo.text) ? node.nodeInfo.text : null;
+		return permittedBlockElements.includes(node.nodeName) ? node.nodeName : 'P';
+	}
 
-		if (Array.isArray(nodeInfoTextArray)) {
-			var isListItem = nodeInfoTextArray.some(function (text) {
-				return Array.isArray(text.style) && text.style.includes('html-li');
-			});
-
-			if (isListItem) {
-				structType = 'LI';
-			}
+	// Helper to get list annotation from a line or vector item
+	function getListAnnotation(item) {
+		// Check the item directly (marker lines/vectors carry annotations directly)
+		if (item.item && item.item._listRef) {
+			return {
+				listRef: item.item._listRef,
+				listItemIndex: item.item._listItemIndex,
+				isMarker: item.item._isListMarker === true
+			};
 		}
-
-		return structType;
+		// Check the _node (content lines carry annotations via the node)
+		var node = item.item && item.item._node;
+		if (node && node._listRef) {
+			return {
+				listRef: node._listRef,
+				listItemIndex: node._listItemIndex,
+				isMarker: false
+			};
+		}
+		return null;
 	}
 
 	for (var i = 0; i < pages.length; i++) {
@@ -59492,9 +59568,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		isOpenBlock = false;
 		openStructType = null;
 		blockItem = null;
-		labelItem = null;
 		blockContent = undefined;
-		listBlockItem = null;
 		isInToc = false;
 		tocGroupItem = null;
 		previousStructType = null;
@@ -59508,6 +59582,13 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		currentTableRef = null;
 		currentRowIndex = null;
 		currentColIndex = null;
+
+		// List structure state
+		listStruct = null;
+		currentLI = null;
+		currentLbl = null;
+		currentListRef = null;
+		currentListItemIndex = null;
 
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
@@ -59569,6 +59650,55 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 				closeTable();
 			}
 
+			// List structure detection from annotated list metadata
+			var listAnnotation = getListAnnotation(item);
+
+			if (listAnnotation) {
+				ensureSect();
+
+				// Open or switch list
+				if (!listStruct) {
+					openList(listAnnotation.listRef);
+				} else if (currentListRef !== listAnnotation.listRef) {
+					closeList();
+					openList(listAnnotation.listRef);
+				}
+
+				// Open or switch list item
+				if (listAnnotation.listItemIndex !== null && listAnnotation.listItemIndex !== currentListItemIndex) {
+					closeListItem();
+					openListItem(listAnnotation.listItemIndex);
+				}
+
+				// Handle marker items (Lbl)
+				if (listAnnotation.isMarker && currentLbl) {
+					if (item.type === 'vector') {
+						// Bullet marker (canvas vector) — tag as Lbl content
+						var lblContent = pdfKitDoc.markStructureContent('Lbl');
+						currentLbl.add(lblContent);
+						pdfKitDoc.markContent('Lbl');
+						renderVector(item.item, patterns, pdfKitDoc);
+						pdfKitDoc.endMarkedContent();
+						continue;
+					} else if (item.type === 'line') {
+						// Number/letter marker (text line) — tag as Lbl content
+						var lblContent = pdfKitDoc.markStructureContent('Lbl');
+						currentLbl.add(lblContent);
+						pdfKitDoc.markContent('Lbl');
+						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc, { blockItem: currentLbl, structType: 'Lbl' });
+						pdfKitDoc.endMarkedContent();
+						continue;
+					}
+				}
+
+				// Non-marker content: close label if still open, content goes into LI
+				if (currentLbl) {
+					closeListLabel();
+				}
+			} else if (!listAnnotation && listStruct && item.type !== 'vector') {
+				closeList();
+			}
+
 			// For items other than lines, mark the content as an Artifact so it's
 			// not included in the document structure.
 			switch (item.type) {
@@ -59590,50 +59720,22 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 							ensureSect();
 						}
 
-						// If we are in a list and encounter a non-list item, we need to close the list block.
-						if (structType && structType !== 'LI'  && listBlockItem) {
-							closeListBlock();
-						}
-
 						// If we don't have an open block, open one now.
 						if(!isOpenBlock && structType && pageSection) {
 							var parent = getContentParent();
 
 							blockItem = pdfKitDoc.struct(structType);
-							openStructType = structType;
 							if (isInToc) {
 								tocGroupItem = pdfKitDoc.struct('TOCI');
 								parent.add(tocGroupItem);
-							}
-
-							if (structType === 'LI') {
-								if (!listBlockItem) {
-									listBlockItem = pdfKitDoc.struct('L');
-									if (isInToc && tocGroupItem) {
-										tocGroupItem.add(listBlockItem);
-									} else {
-										parent.add(listBlockItem);
-									}
-								}
-								listBlockItem.add(blockItem);
-								labelItem = pdfKitDoc.struct('Lbl');
-								blockItem.add(labelItem);
+								tocGroupItem.add(blockItem);
 							} else {
-								if (isInToc && tocGroupItem) {
-									tocGroupItem.add(blockItem);
-								} else {
-									parent.add(blockItem);
-								}
+								parent.add(blockItem);
 							}
 							isOpenBlock = true;
 						}
 
-						if (isOpenBlock && structType === 'LI' && blockItem && labelItem) {
-							blockContent = pdfKitDoc.markStructureContent('Lbl');
-							labelItem.add(blockContent);
-							pdfKitDoc.markContent('Lbl');
-							renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc, { blockItem: labelItem, structType: 'Lbl' });
-						} else if (isOpenBlock && structType && blockItem) {
+						if (isOpenBlock && structType && blockItem) {
 							blockContent = pdfKitDoc.markStructureContent(structType);
 							blockItem.add(blockContent);
 							pdfKitDoc.markContent(structType);
@@ -59676,7 +59778,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			progressCallback(renderedItems / totalItems);
 		}
 		closeOpenBlock();
-		closeListBlock();
+		closeList();
 		closeTocGroup();
 		closeTable();
 		closeTocSection();
@@ -62423,7 +62525,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 7372:
+/***/ 80392:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),
