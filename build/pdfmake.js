@@ -16058,18 +16058,25 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
   var rowHeights = tableNode.table.heights;
   var headerRows = tableNode.table.headerRows || 0;
   var isAccessibleTable = tableNode.layout === 'wellcomeTableLayout';
+  function annotateNode(node, tableRef, rowIndex, colIndex, isHeader, headerRowCount, totalRows, totalCols) {
+    node._tableRef = tableRef;
+    node._tableRowIndex = rowIndex;
+    node._tableColIndex = colIndex;
+    node._isTableHeader = isHeader;
+    node._tableHeaderRows = headerRowCount;
+    node._tableTotalRows = totalRows;
+    node._tableTotalCols = totalCols;
+    if (node.stack) {
+      for (var si = 0; si < node.stack.length; si++) {
+        annotateNode(node.stack[si], tableRef, rowIndex, colIndex, isHeader, headerRowCount, totalRows, totalCols);
+      }
+    }
+  }
   for (var i = 0, l = tableNode.table.body.length; i < l; i++) {
     // Annotate each cell with table metadata for accessibility tagging
     if (isAccessibleTable) {
       for (var ci = 0; ci < tableNode.table.body[i].length; ci++) {
-        var cellToAnnotate = tableNode.table.body[i][ci];
-        cellToAnnotate._tableRef = tableNode;
-        cellToAnnotate._tableRowIndex = i;
-        cellToAnnotate._tableColIndex = ci;
-        cellToAnnotate._isTableHeader = i < headerRows;
-        cellToAnnotate._tableHeaderRows = headerRows;
-        cellToAnnotate._tableTotalRows = tableNode.table.body.length;
-        cellToAnnotate._tableTotalCols = tableNode.table.body[0].length;
+        annotateNode(tableNode.table.body[i][ci], tableNode, i, ci, i < headerRows, headerRows, tableNode.table.body.length, tableNode.table.body[0].length);
       }
     }
 
@@ -16261,7 +16268,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 83604:
+/***/ 78946:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55841,7 +55848,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(78286);
+var FileSaver = __webpack_require__(1848);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58797,7 +58804,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(83604));
+var PdfKit = _interopDefault(__webpack_require__(78946));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59488,8 +59495,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			var itemStyles = item.item && item.item._node && item.item._node.style ? item.item._node.style : [];
 			var isTocItem = itemStyles.includes('tocItem');
 
-			console.log('item', item);
-
 			if (isTocItem && !isInToc) {
 				createPageSection('TOC');
 				isInToc = true;
@@ -59682,10 +59687,7 @@ function offsetText(y, inline) {
 	return newY;
 }
 
-function renderLine(line, x, y, patterns, pdfKitDoc) {
-
-	//console.log('line', line);
-	
+function renderLine(line, x, y, patterns, pdfKitDoc) {	
 
 	function preparePageNodeRefLine(_pageNodeRef, inline) {
 		var newWidth;
@@ -62323,7 +62325,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 78286:
+/***/ 1848:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),

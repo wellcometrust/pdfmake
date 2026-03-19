@@ -858,10 +858,7 @@ function offsetText(y, inline) {
 	return newY;
 }
 
-function renderLine(line, x, y, patterns, pdfKitDoc) {
-
-	//console.log('line', line);
-	
+function renderLine(line, x, y, patterns, pdfKitDoc) {	
 
 	function preparePageNodeRefLine(_pageNodeRef, inline) {
 		var newWidth;

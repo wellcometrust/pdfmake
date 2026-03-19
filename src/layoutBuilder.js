@@ -927,18 +927,27 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 	var rowHeights = tableNode.table.heights;
 	var headerRows = tableNode.table.headerRows || 0;
 	var isAccessibleTable = tableNode.layout === 'wellcomeTableLayout';
+
+	function annotateNode(node, tableRef, rowIndex, colIndex, isHeader, headerRowCount, totalRows, totalCols) {
+		node._tableRef = tableRef;
+		node._tableRowIndex = rowIndex;
+		node._tableColIndex = colIndex;
+		node._isTableHeader = isHeader;
+		node._tableHeaderRows = headerRowCount;
+		node._tableTotalRows = totalRows;
+		node._tableTotalCols = totalCols;
+		if (node.stack) {
+			for (var si = 0; si < node.stack.length; si++) {
+				annotateNode(node.stack[si], tableRef, rowIndex, colIndex, isHeader, headerRowCount, totalRows, totalCols);
+			}
+		}
+	}
+
 	for (var i = 0, l = tableNode.table.body.length; i < l; i++) {
 		// Annotate each cell with table metadata for accessibility tagging
 		if (isAccessibleTable) {
 			for (var ci = 0; ci < tableNode.table.body[i].length; ci++) {
-				var cellToAnnotate = tableNode.table.body[i][ci];
-				cellToAnnotate._tableRef = tableNode;
-				cellToAnnotate._tableRowIndex = i;
-				cellToAnnotate._tableColIndex = ci;
-				cellToAnnotate._isTableHeader = (i < headerRows);
-				cellToAnnotate._tableHeaderRows = headerRows;
-				cellToAnnotate._tableTotalRows = tableNode.table.body.length;
-				cellToAnnotate._tableTotalCols = tableNode.table.body[0].length;
+				annotateNode(tableNode.table.body[i][ci], tableNode, i, ci, (i < headerRows), headerRows, tableNode.table.body.length, tableNode.table.body[0].length);
 			}
 		}
 
