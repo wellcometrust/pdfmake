@@ -925,7 +925,23 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 	processor.beginTable(this.writer);
 
 	var rowHeights = tableNode.table.heights;
+	var headerRows = tableNode.table.headerRows || 0;
+	var isAccessibleTable = tableNode.layout === 'wellcomeTableLayout';
 	for (var i = 0, l = tableNode.table.body.length; i < l; i++) {
+		// Annotate each cell with table metadata for accessibility tagging
+		if (isAccessibleTable) {
+			for (var ci = 0; ci < tableNode.table.body[i].length; ci++) {
+				var cellToAnnotate = tableNode.table.body[i][ci];
+				cellToAnnotate._tableRef = tableNode;
+				cellToAnnotate._tableRowIndex = i;
+				cellToAnnotate._tableColIndex = ci;
+				cellToAnnotate._isTableHeader = (i < headerRows);
+				cellToAnnotate._tableHeaderRows = headerRows;
+				cellToAnnotate._tableTotalRows = tableNode.table.body.length;
+				cellToAnnotate._tableTotalCols = tableNode.table.body[0].length;
+			}
+		}
+
 		// if dontBreakRows and row starts a rowspan
 		// we store the 'y' of the beginning of each rowSpan
 		if (processor.dontBreakRows) {
@@ -1028,6 +1044,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 		node.positions.push(positions);
 		line = this.buildNextLine(node);
 		if (line) {
+			line._node = node;
 			currentHeight += line.getHeight();
 		}
 	}

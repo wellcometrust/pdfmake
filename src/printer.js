@@ -421,6 +421,16 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		var tocGroupItem = null;
 		var previousStructType = null;
 
+		// Table structure state
+		var tableStruct = null;
+		var theadStruct = null;
+		var tbodyStruct = null;
+		var currentTR = null;
+		var currentCell = null;
+		var currentTableRef = null;
+		var currentRowIndex = null;
+		var currentColIndex = null;
+
 		function createPageSection(type) {
 			pageSection = pdfKitDoc.struct(type);
 			pdfDocument.add(pageSection);
@@ -488,6 +498,101 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			isInToc = false;
 		}
 
+		function closeTableCell() {
+			if (!currentCell) {
+				return;
+			}
+			closeOpenBlock();
+			closeListBlock();
+			currentCell.end();
+			currentCell = null;
+			currentColIndex = null;
+		}
+
+		function closeTableRow() {
+			if (!currentTR) {
+				return;
+			}
+			closeTableCell();
+			currentTR.end();
+			currentTR = null;
+			currentRowIndex = null;
+		}
+
+		function closeTableHeaderGroup() {
+			if (!theadStruct) {
+				return;
+			}
+			closeTableRow();
+			theadStruct.end();
+			theadStruct = null;
+		}
+
+		function closeTableBodyGroup() {
+			if (!tbodyStruct) {
+				return;
+			}
+			closeTableRow();
+			tbodyStruct.end();
+			tbodyStruct = null;
+		}
+
+		function closeTable() {
+			if (!tableStruct) {
+				return;
+			}
+			closeTableHeaderGroup();
+			closeTableBodyGroup();
+			tableStruct.end();
+			tableStruct = null;
+			currentTableRef = null;
+			currentRowIndex = null;
+			currentColIndex = null;
+		}
+
+		function openTable(tableRef) {
+			ensureSect();
+			tableStruct = pdfKitDoc.struct('Table');
+			pageSection.add(tableStruct);
+			currentTableRef = tableRef;
+		}
+
+		function openTableRow(rowIndex, isHeader) {
+			if (isHeader) {
+				if (!theadStruct) {
+					theadStruct = pdfKitDoc.struct('THead');
+					tableStruct.add(theadStruct);
+				}
+				currentTR = pdfKitDoc.struct('TR');
+				theadStruct.add(currentTR);
+			} else {
+				if (!tbodyStruct) {
+					closeTableHeaderGroup();
+					tbodyStruct = pdfKitDoc.struct('TBody');
+					tableStruct.add(tbodyStruct);
+				}
+				currentTR = pdfKitDoc.struct('TR');
+				tbodyStruct.add(currentTR);
+			}
+			currentRowIndex = rowIndex;
+		}
+
+		function openTableCellElement(colIndex, isHeader) {
+			currentCell = pdfKitDoc.struct(isHeader ? 'TH' : 'TD');
+			currentTR.add(currentCell);
+			currentColIndex = colIndex;
+		}
+
+		function getContentParent() {
+			if (currentCell) {
+				return currentCell;
+			}
+			if (isInToc && tocGroupItem) {
+				return tocGroupItem;
+			}
+			return pageSection;
+		}
+
 		function renderFigure(item, renderFn) {
 			var hasAltText = item.item && item.item.alt !== undefined && item.item.alt !== null;
 			var hasActualText = item.item && item.item.actualText !== undefined && item.item.actualText !== null;
@@ -509,13 +614,14 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 			var figure = pdfKitDoc.struct('Figure', figureOptions);
 			var figureGroup = null;
+			var parent = getContentParent();
 
 			if (isInToc) {
 				figureGroup = pdfKitDoc.struct('TOCI');
-				pageSection.add(figureGroup);
+				parent.add(figureGroup);
 				figureGroup.add(figure);
 			} else {
-				pageSection.add(figure);
+				parent.add(figure);
 			}
 
 			blockContent = pdfKitDoc.markStructureContent('Figure');
@@ -551,6 +657,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 			return structType;
 		}
+		
 
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
@@ -567,7 +674,51 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			if (!isTocItem && isInToc && hasPermittedBlockNode) {
 				closeTocSection();
 			}
-			
+
+			// Table structure detection from annotated cell metadata
+			var itemNode = item.item && item.item._node ? item.item._node : null;
+			var itemTableRef = itemNode && itemNode._tableRef ? itemNode._tableRef : null;
+			var itemRowIndex = itemNode && itemNode._tableRowIndex !== undefined ? itemNode._tableRowIndex : null;
+			var itemColIndex = itemNode && itemNode._tableColIndex !== undefined ? itemNode._tableColIndex : null;
+			var itemIsTableHeader = itemNode ? itemNode._isTableHeader === true : false;
+			var itemIsSpanCell = itemNode ? itemNode._span === true : false;
+
+			// Handle table transitions
+			if (itemTableRef && !itemIsSpanCell) {
+				if (!tableStruct) {
+					openTable(itemTableRef);
+				} else if (currentTableRef !== itemTableRef) {
+					closeTable();
+					openTable(itemTableRef);
+				}
+
+				// Handle row transitions
+				if (itemRowIndex !== null && itemRowIndex !== currentRowIndex) {
+					closeTableRow();
+					openTableRow(itemRowIndex, itemIsTableHeader);
+				}
+
+				// Handle header-to-body group transition within same row group
+				if (currentRowIndex === itemRowIndex && theadStruct && !itemIsTableHeader) {
+					closeTableHeaderGroup();
+					if (!tbodyStruct) {
+						tbodyStruct = pdfKitDoc.struct('TBody');
+						tableStruct.add(tbodyStruct);
+					}
+				}
+
+				// Handle cell transitions
+				if (itemColIndex !== null && itemColIndex !== currentColIndex) {
+					closeTableCell();
+					openTableCellElement(itemColIndex, itemIsTableHeader);
+				}
+			} else if (!itemTableRef && tableStruct && item.type !== 'vector') {
+				// Only close the table for non-vector items without table metadata.
+				// Vectors (table borders) are interleaved between cell content
+				// and should pass through as Artifacts without disrupting table structure.
+				closeTable();
+			}
+
 			// For items other than lines, mark the content as an Artifact so it's
 			// not included in the document structure.
 			switch (item.type) {
@@ -596,12 +747,13 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 						// If we don't have an open block, open one now.
 						if(!isOpenBlock && structType && pageSection) {
-						
+							var parent = getContentParent();
+
 							blockItem = pdfKitDoc.struct(structType);
 							openStructType = structType;
 							if (isInToc) {
 								tocGroupItem = pdfKitDoc.struct('TOCI');
-								pageSection.add(tocGroupItem);
+								parent.add(tocGroupItem);
 							}
 
 							if (structType === 'LI') {
@@ -610,7 +762,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 									if (isInToc && tocGroupItem) {
 										tocGroupItem.add(listBlockItem);
 									} else {
-										pageSection.add(listBlockItem);
+										parent.add(listBlockItem);
 									}
 								}
 								listBlockItem.add(blockItem);
@@ -620,7 +772,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 								if (isInToc && tocGroupItem) {
 									tocGroupItem.add(blockItem);
 								} else {
-									pageSection.add(blockItem);
+									parent.add(blockItem);
 								}
 							}
 							isOpenBlock = true;
@@ -674,7 +826,12 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		closeOpenBlock();
 		closeListBlock();
 		closeTocGroup();
+		closeTable();
 		closeTocSection();
+		if (pageSection && !isInToc) {
+			pageSection.end();
+			pageSection = null;
+		}
 		if (page.watermark) {
 			renderWatermark(page, pdfKitDoc);
 		}
