@@ -419,6 +419,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		var listBlockItem = null;
 		var isInToc = false;
 		var tocGroupItem = null;
+		var previousStructType = null;
 
 		function createPageSection(type) {
 			pageSection = pdfKitDoc.struct(type);
@@ -488,9 +489,25 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		}
 
 		function renderFigure(item, renderFn) {
+			var hasAltText = item.item && item.item.alt !== undefined && item.item.alt !== null;
+			var hasActualText = item.item && item.item.actualText !== undefined && item.item.actualText !== null;
+			if (!hasAltText && !hasActualText) {
+				pdfKitDoc.markContent('Artifact', { type: "Layout" });
+				renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+				return;
+			}
+
 			ensureSect();
 
-			var figure = pdfKitDoc.struct('Figure');
+			var figureOptions = {};
+			if (hasAltText) {
+				figureOptions.alt = item.item.alt;
+			}
+			if (hasActualText) {
+				figureOptions.actual = item.item.actualText;
+			}
+
+			var figure = pdfKitDoc.struct('Figure', figureOptions);
 			var figureGroup = null;
 
 			if (isInToc) {
@@ -561,6 +578,12 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 				case 'line':
 					{
 						var structType = deriveLineStructType(item);
+						var hasInlines = Array.isArray(item.item && item.item.inlines) && item.item.inlines.length > 0;
+						var hasExplicitLastLineInParagraph = typeof item.item.lastLineInParagraph === 'boolean';
+
+						if (!structType && hasInlines && hasExplicitLastLineInParagraph) {
+							structType = previousStructType;
+						}
 
 						if (!isInToc && hasPermittedBlockNode) {
 							ensureSect();
@@ -614,6 +637,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 						}
 					
 						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
+
+						if (structType) {
+							previousStructType = structType;
+						}
 
 						// If this line is the last in the block, close the block.
 						// This allows multiple lines to be grouped into a single block structure.
