@@ -16285,7 +16285,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 44453:
+/***/ 56718:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55865,7 +55865,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(80392);
+var FileSaver = __webpack_require__(89819);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58821,7 +58821,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(44453));
+var PdfKit = _interopDefault(__webpack_require__(56718));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59232,7 +59232,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	pdfKitDoc._pdfMakePages = pages;
 	pdfKitDoc.addPage();
 
-	var permittedBlockElements = ["H", "H1", "H2", "H3", "H4", "H5", "H6", "P", "LI"];
+	var permittedBlockElements = ["H", "H1", "H2", "H3", "H4", "H5", "H6", "P"];
 
 	// Initialise document logical structure
 	var pdfDocument = pdfKitDoc.struct('Document');
@@ -59252,7 +59252,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	var page;
 	var pageSection = null;
 	var isOpenBlock = false;
-	var openStructType = null;
 	var blockItem = null;
 	var blockContent;
 	var isInToc = false;
@@ -59275,6 +59274,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	var currentLbl = null;
 	var currentListRef = null;
 	var currentListItemIndex = null;
+	var listStack = [];
 
 	function createPageSection(type) {
 		pageSection = pdfKitDoc.struct(type);
@@ -59307,7 +59307,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 		blockItem = null;
 		isOpenBlock = false;
-		openStructType = null;
 
 		if (isInToc && tocGroupItem) {
 			closeTocGroup();
@@ -59333,21 +59332,34 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 
 	// --- List structure helpers ---
 
-	function closeListLabel() {
-		if (!currentLbl) {
-			return;
-		}
-		closeOpenBlock();
-		currentLbl.end();
-		currentLbl = null;
+	function pushListContext() {
+		listStack.push({
+			listStruct: listStruct,
+			currentLI: currentLI,
+			currentLbl: currentLbl,
+			currentListRef: currentListRef,
+			currentListItemIndex: currentListItemIndex
+		});
+	}
+
+	function popListContext() {
+		var ctx = listStack.pop();
+		listStruct = ctx.listStruct;
+		currentLI = ctx.currentLI;
+		currentLbl = ctx.currentLbl;
+		currentListRef = ctx.currentListRef;
+		currentListItemIndex = ctx.currentListItemIndex;
 	}
 
 	function closeListItem() {
 		if (!currentLI) {
 			return;
 		}
-		closeListLabel();
 		closeOpenBlock();
+		if (currentLbl) {
+			currentLbl.end();
+			currentLbl = null;
+		}
 		currentLI.end();
 		currentLI = null;
 		currentListItemIndex = null;
@@ -59363,6 +59375,15 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		currentListRef = null;
 	}
 
+	function closeAllLists() {
+		while (listStruct) {
+			closeList();
+			if (listStack.length > 0) {
+				popListContext();
+			}
+		}
+	}
+
 	function openList(listRef) {
 		var parent = getContentParent();
 		listStruct = pdfKitDoc.struct('L');
@@ -59372,15 +59393,17 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			parent.add(listStruct);
 		}
 		currentListRef = listRef;
+		currentLI = null;
+		currentLbl = null;
+		currentListItemIndex = null;
 	}
 
 	function openListItem(itemIndex) {
 		currentLI = pdfKitDoc.struct('LI');
 		listStruct.add(currentLI);
-		currentListItemIndex = itemIndex;
-		// Create label element — marker content will be added to it
-		currentLbl = pdfKitDoc.struct('Lbl');
+		currentLbl = pdfKitDoc.struct('LBody');
 		currentLI.add(currentLbl);
+		currentListItemIndex = itemIndex;
 	}
 
 	// --- Table structure helpers ---
@@ -59474,6 +59497,9 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		if (currentCell) {
 			return currentCell;
 		}
+		if (currentLbl) {
+			return currentLbl;
+		}
 		if (currentLI) {
 			return currentLI;
 		}
@@ -59566,7 +59592,6 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		page = pages[i];
 		pageSection = null;
 		isOpenBlock = false;
-		openStructType = null;
 		blockItem = null;
 		blockContent = undefined;
 		isInToc = false;
@@ -59589,6 +59614,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		currentLbl = null;
 		currentListRef = null;
 		currentListItemIndex = null;
+		listStack = [];
 
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
@@ -59660,8 +59686,35 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 				if (!listStruct) {
 					openList(listAnnotation.listRef);
 				} else if (currentListRef !== listAnnotation.listRef) {
-					closeList();
-					openList(listAnnotation.listRef);
+					// Different list ref — determine nesting vs returning to parent vs sibling
+					if (listAnnotation.listRef._listRef === currentListRef) {
+						// Nesting: the new list's parent is the current list.
+						// Ensure the correct outer LI is open for the container item.
+						var containerItemIndex = listAnnotation.listRef._listItemIndex;
+						if (containerItemIndex !== null && containerItemIndex !== currentListItemIndex) {
+							closeListItem();
+							openListItem(containerItemIndex);
+						}
+						closeOpenBlock();
+						pushListContext();
+						openList(listAnnotation.listRef);
+					} else {
+						// Walk up the stack looking for a parent list that matches
+						var found = false;
+						while (listStack.length > 0) {
+							closeList();
+							popListContext();
+							if (currentListRef === listAnnotation.listRef) {
+								found = true;
+								break;
+							}
+						}
+						if (!found) {
+							// Completely different list
+							closeList();
+							openList(listAnnotation.listRef);
+						}
+					}
 				}
 
 				// Open or switch list item
@@ -59670,33 +59723,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 					openListItem(listAnnotation.listItemIndex);
 				}
 
-				// Handle marker items (Lbl)
-				if (listAnnotation.isMarker && currentLbl) {
-					if (item.type === 'vector') {
-						// Bullet marker (canvas vector) — tag as Lbl content
-						var lblContent = pdfKitDoc.markStructureContent('Lbl');
-						currentLbl.add(lblContent);
-						pdfKitDoc.markContent('Lbl');
-						renderVector(item.item, patterns, pdfKitDoc);
-						pdfKitDoc.endMarkedContent();
-						continue;
-					} else if (item.type === 'line') {
-						// Number/letter marker (text line) — tag as Lbl content
-						var lblContent = pdfKitDoc.markStructureContent('Lbl');
-						currentLbl.add(lblContent);
-						pdfKitDoc.markContent('Lbl');
-						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc, { blockItem: currentLbl, structType: 'Lbl' });
-						pdfKitDoc.endMarkedContent();
-						continue;
-					}
-				}
-
-				// Non-marker content: close label if still open, content goes into LI
-				if (currentLbl) {
-					closeListLabel();
-				}
+				// Marker items (bullets/numbers) fall through to the switch
+				// where vectors become Artifacts and text lines are rendered normally.
 			} else if (!listAnnotation && listStruct && item.type !== 'vector') {
-				closeList();
+				closeAllLists();
 			}
 
 			// For items other than lines, mark the content as an Artifact so it's
@@ -59778,7 +59808,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			progressCallback(renderedItems / totalItems);
 		}
 		closeOpenBlock();
-		closeList();
+		closeAllLists();
 		closeTocGroup();
 		closeTable();
 		closeTocSection();
@@ -62525,7 +62555,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 80392:
+/***/ 89819:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),
