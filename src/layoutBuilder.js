@@ -885,7 +885,9 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 
 	var nextMarker;
 	this.tracker.auto('lineAdded', addMarkerToFirstLeaf, function () {
-		items.forEach(function (item) {
+		items.forEach(function (item, itemIndex) {
+			// Annotate list item nodes for accessibility tagging
+			annotateListItemNode(item, node, itemIndex);
 			nextMarker = item.listMarker;
 			self.processNode(item);
 			addAll(node.positions, item.positions);
@@ -893,6 +895,16 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 	});
 
 	this.writer.context().addMargin(-gapSize.width);
+
+	function annotateListItemNode(itemNode, listRef, itemIndex) {
+		itemNode._listRef = listRef;
+		itemNode._listItemIndex = itemIndex;
+		if (itemNode.stack) {
+			for (var si = 0; si < itemNode.stack.length; si++) {
+				annotateListItemNode(itemNode.stack[si], listRef, itemIndex);
+			}
+		}
+	}
 
 	function addMarkerToFirstLeaf(line) {
 		// I'm not very happy with the way list processing is implemented
@@ -925,7 +937,29 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 	processor.beginTable(this.writer);
 
 	var rowHeights = tableNode.table.heights;
+	var headerRows = tableNode.table.headerRows || 0;
+	var isAccessibleTable = tableNode.layout === 'wellcomeTableLayout';
+
+	function annotateNode(node, tableRef, rowIndex, colIndex, isHeader) {
+		node._tableRef = tableRef;
+		node._tableRowIndex = rowIndex;
+		node._tableColIndex = colIndex;
+		node._isTableHeader = isHeader;
+		if (node.stack) {
+			for (var si = 0; si < node.stack.length; si++) {
+				annotateNode(node.stack[si], tableRef, rowIndex, colIndex, isHeader);
+			}
+		}
+	}
+
 	for (var i = 0, l = tableNode.table.body.length; i < l; i++) {
+		// Annotate each cell with table metadata for accessibility tagging
+		if (isAccessibleTable) {
+			for (var ci = 0; ci < tableNode.table.body[i].length; ci++) {
+				annotateNode(tableNode.table.body[i][ci], tableNode, i, ci, (i < headerRows));
+			}
+		}
+
 		// if dontBreakRows and row starts a rowspan
 		// we store the 'y' of the beginning of each rowSpan
 		if (processor.dontBreakRows) {
@@ -989,7 +1023,8 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 // leafs (texts)
 LayoutBuilder.prototype.processLeaf = function (node) {
 	var line = this.buildNextLine(node);
-	if (line && (node.tocItem || node.id)) {
+
+	if (line) {
 		line._node = node;
 	}
 	var currentHeight = (line) ? line.getHeight() : 0;
@@ -1027,6 +1062,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 		node.positions.push(positions);
 		line = this.buildNextLine(node);
 		if (line) {
+			line._node = node;
 			currentHeight += line.getHeight();
 		}
 	}

@@ -163,7 +163,7 @@ module.exports = {
 						comments: false,
 					},
 					compress: {
-						drop_console: true
+						drop_console: false
 					},
 					keep_classnames: true,
 					keep_fnames: true

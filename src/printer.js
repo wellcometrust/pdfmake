@@ -386,6 +386,12 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	pdfKitDoc._pdfMakePages = pages;
 	pdfKitDoc.addPage();
 
+	var permittedBlockElements = ["H", "H1", "H2", "H3", "H4", "H5", "H6", "P"];
+
+	// Initialise document logical structure
+	var pdfDocument = pdfKitDoc.struct('Document');
+	pdfKitDoc.addStructure(pdfDocument);
+	
 	var totalItems = 0;
 	if (progressCallback) {
 		pages.forEach(function (page) {
@@ -397,41 +403,578 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 	progressCallback = progressCallback || function () {
 	};
 
+	var page;
+	var pageSection = null;
+	var isOpenBlock = false;
+	var blockItem = null;
+	var isInToc = false;
+	var tocGroupItem = null;
+	var previousStructType = null;
+
+	// Table structure state
+	var tableStruct = null;
+	var theadStruct = null;
+	var tbodyStruct = null;
+	var currentTR = null;
+	var currentCell = null;
+	var currentTableRef = null;
+	var currentRowIndex = null;
+	var currentColIndex = null;
+
+	// List structure state
+	var listStruct = null;
+	var currentLI = null;
+	var currentLBody = null;
+	var currentListRef = null;
+	var currentListItemIndex = null;
+	var listStack = [];
+
+	function createPageSection(type) {
+		pageSection = pdfKitDoc.struct(type);
+		pdfDocument.add(pageSection);
+	}
+
+	function ensureSect() {
+		if (!isInToc && !pageSection) {
+			createPageSection('Sect');
+		}
+	}
+
+	function closeTocGroup() {
+		if (tocGroupItem) {
+			tocGroupItem.end();
+			tocGroupItem = null;
+		}
+	}
+
+	function closeOpenBlock() {
+		if (!isOpenBlock) {
+			return;
+		}
+
+		if (blockItem) {
+			blockItem.end();
+		}
+
+		blockItem = null;
+		isOpenBlock = false;
+
+		if (isInToc && tocGroupItem) {
+			closeTocGroup();
+		}
+	}
+
+	function closeTocSection() {
+		if (!isInToc) {
+			return;
+		}
+
+		closeOpenBlock();
+		closeAllLists();
+		closeTocGroup();
+
+		if (pageSection) {
+			pageSection.end();
+		}
+
+		pageSection = null;
+		isInToc = false;
+	}
+
+	// --- List structure helpers ---
+
+	function pushListContext() {
+		listStack.push({
+			listStruct: listStruct,
+			currentLI: currentLI,
+			currentLBody: currentLBody,
+			currentListRef: currentListRef,
+			currentListItemIndex: currentListItemIndex
+		});
+	}
+
+	function popListContext() {
+		var ctx = listStack.pop();
+		listStruct = ctx.listStruct;
+		currentLI = ctx.currentLI;
+		currentLBody = ctx.currentLBody;
+		currentListRef = ctx.currentListRef;
+		currentListItemIndex = ctx.currentListItemIndex;
+	}
+
+	function closeListItem() {
+		if (!currentLI) {
+			return;
+		}
+		closeOpenBlock();
+		if (currentLBody) {
+			currentLBody.end();
+			currentLBody = null;
+		}
+		currentLI.end();
+		currentLI = null;
+		currentListItemIndex = null;
+	}
+
+	function closeList() {
+		if (!listStruct) {
+			return;
+		}
+		closeListItem();
+		listStruct.end();
+		listStruct = null;
+		currentListRef = null;
+	}
+
+	function closeAllLists() {
+		while (listStruct) {
+			closeList();
+			if (listStack.length > 0) {
+				popListContext();
+			}
+		}
+	}
+
+	function openList(listRef) {
+		var parent = getContentParent();
+		listStruct = pdfKitDoc.struct('L');
+		if (isInToc && tocGroupItem) {
+			tocGroupItem.add(listStruct);
+		} else {
+			parent.add(listStruct);
+		}
+		currentListRef = listRef;
+		currentLI = null;
+		currentLBody = null;
+		currentListItemIndex = null;
+	}
+
+	function openListItem(itemIndex) {
+		currentLI = pdfKitDoc.struct('LI');
+		listStruct.add(currentLI);
+		currentLBody = pdfKitDoc.struct('LBody');
+		currentLI.add(currentLBody);
+		currentListItemIndex = itemIndex;
+	}
+
+	// --- Table structure helpers ---
+
+	function closeTableCell() {
+		if (!currentCell) {
+			return;
+		}
+		closeOpenBlock();
+		closeList();
+		currentCell.end();
+		currentCell = null;
+		currentColIndex = null;
+	}
+
+	function closeTableRow() {
+		if (!currentTR) {
+			return;
+		}
+		closeTableCell();
+		currentTR.end();
+		currentTR = null;
+		currentRowIndex = null;
+	}
+
+	function closeTableHeaderGroup() {
+		if (!theadStruct) {
+			return;
+		}
+		closeTableRow();
+		theadStruct.end();
+		theadStruct = null;
+	}
+
+	function closeTableBodyGroup() {
+		if (!tbodyStruct) {
+			return;
+		}
+		closeTableRow();
+		tbodyStruct.end();
+		tbodyStruct = null;
+	}
+
+	function closeTable() {
+		if (!tableStruct) {
+			return;
+		}
+		closeTableHeaderGroup();
+		closeTableBodyGroup();
+		tableStruct.end();
+		tableStruct = null;
+		currentTableRef = null;
+		currentRowIndex = null;
+		currentColIndex = null;
+	}
+
+	function openTable(tableRef) {
+		ensureSect();
+		tableStruct = pdfKitDoc.struct('Table');
+		pageSection.add(tableStruct);
+		currentTableRef = tableRef;
+	}
+
+	function openTableRow(rowIndex, isHeader) {
+		if (isHeader) {
+			if (!theadStruct) {
+				theadStruct = pdfKitDoc.struct('THead');
+				tableStruct.add(theadStruct);
+			}
+			currentTR = pdfKitDoc.struct('TR');
+			theadStruct.add(currentTR);
+		} else {
+			if (!tbodyStruct) {
+				closeTableHeaderGroup();
+				tbodyStruct = pdfKitDoc.struct('TBody');
+				tableStruct.add(tbodyStruct);
+			}
+			currentTR = pdfKitDoc.struct('TR');
+			tbodyStruct.add(currentTR);
+		}
+		currentRowIndex = rowIndex;
+	}
+
+	function openTableCellElement(colIndex, isHeader) {
+		currentCell = pdfKitDoc.struct(isHeader ? 'TH' : 'TD');
+		currentTR.add(currentCell);
+		currentColIndex = colIndex;
+	}
+
+	function getContentParent() {
+		if (currentCell) {
+			return currentCell;
+		}
+		if (currentLBody) {
+			return currentLBody;
+		}
+		if (currentLI) {
+			return currentLI;
+		}
+		if (isInToc && tocGroupItem) {
+			return tocGroupItem;
+		}
+		return pageSection;
+	}
+
+	function renderFigure(item, renderFn) {
+		var hasAltText = item.item && item.item.alt !== undefined && item.item.alt !== null;
+		var hasActualText = item.item && item.item.actualText !== undefined && item.item.actualText !== null;
+		if (!hasAltText && !hasActualText) {
+			pdfKitDoc.markContent('Artifact', { type: "Layout" });
+			renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+			pdfKitDoc.endMarkedContent();
+			return;
+		}
+
+		ensureSect();
+
+		var figureOptions = {};
+		if (hasAltText) {
+			figureOptions.alt = item.item.alt;
+		}
+		if (hasActualText) {
+			figureOptions.actual = item.item.actualText;
+		}
+
+		var figure = pdfKitDoc.struct('Figure', figureOptions);
+		var figureGroup = null;
+		var parent = getContentParent();
+
+		if (isInToc) {
+			figureGroup = pdfKitDoc.struct('TOCI');
+			parent.add(figureGroup);
+			figureGroup.add(figure);
+		} else {
+			parent.add(figure);
+		}
+
+		var blockContent = pdfKitDoc.markStructureContent('Figure');
+		figure.add(blockContent);
+		pdfKitDoc.markContent('Figure');
+		renderFn(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+		pdfKitDoc.endMarkedContent();
+		figure.end();
+
+		if (figureGroup) {
+			figureGroup.end();
+		}
+	}
+
+	function deriveLineStructType(item) {
+		var node = item.item && item.item._node;
+		if (!node) {
+			return null;
+		}
+
+		return permittedBlockElements.includes(node.nodeName) ? node.nodeName : 'P';
+	}
+
+	// Helper to get list annotation from a line or vector item
+	function getListAnnotation(item) {
+		// Check the item directly (marker lines/vectors carry annotations directly)
+		if (item.item && item.item._listRef) {
+			return {
+				listRef: item.item._listRef,
+				listItemIndex: item.item._listItemIndex
+			};
+		}
+		// Check the _node (content lines carry annotations via the node)
+		var node = item.item && item.item._node;
+		if (node && node._listRef) {
+			return {
+				listRef: node._listRef,
+				listItemIndex: node._listItemIndex
+			};
+		}
+		return null;
+	}
+
 	for (var i = 0; i < pages.length; i++) {
 		if (i > 0) {
 			updatePageOrientationInOptions(pages[i], pdfKitDoc);
 			pdfKitDoc.addPage(pdfKitDoc.options);
 		}
 
-		var page = pages[i];
+		page = pages[i];
+		pageSection = null;
+		isOpenBlock = false;
+		blockItem = null;
+		isInToc = false;
+		tocGroupItem = null;
+		previousStructType = null;
+
+		// Table structure state
+		tableStruct = null;
+		theadStruct = null;
+		tbodyStruct = null;
+		currentTR = null;
+		currentCell = null;
+		currentTableRef = null;
+		currentRowIndex = null;
+		currentColIndex = null;
+
+		// List structure state
+		listStruct = null;
+		currentLI = null;
+		currentLBody = null;
+		currentListRef = null;
+		currentListItemIndex = null;
+		listStack = [];
+
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
+			var itemNodeName = item.item && item.item._node && item.item._node.nodeName;
+			var hasPermittedBlockNode = permittedBlockElements.includes(itemNodeName);
+			var itemStyles = item.item && item.item._node && item.item._node.style ? item.item._node.style : [];
+			var isTocItem = itemStyles.includes('tocItem');
+
+			if (isTocItem && !isInToc) {
+				createPageSection('TOC');
+				isInToc = true;
+			}
+
+			if (!isTocItem && isInToc && hasPermittedBlockNode) {
+				closeTocSection();
+			}
+
+			// Table structure detection from annotated cell metadata
+			var itemNode = item.item && item.item._node ? item.item._node : null;
+			var itemTableRef = itemNode && itemNode._tableRef ? itemNode._tableRef : null;
+			var itemRowIndex = itemNode && itemNode._tableRowIndex !== undefined ? itemNode._tableRowIndex : null;
+			var itemColIndex = itemNode && itemNode._tableColIndex !== undefined ? itemNode._tableColIndex : null;
+			var itemIsTableHeader = itemNode ? itemNode._isTableHeader === true : false;
+			var itemIsSpanCell = itemNode ? itemNode._span === true : false;
+
+			// Handle table transitions
+			if (itemTableRef && !itemIsSpanCell) {
+				if (!tableStruct) {
+					openTable(itemTableRef);
+				} else if (currentTableRef !== itemTableRef) {
+					closeTable();
+					openTable(itemTableRef);
+				}
+
+				// Handle row transitions
+				if (itemRowIndex !== null && itemRowIndex !== currentRowIndex) {
+					closeTableRow();
+					openTableRow(itemRowIndex, itemIsTableHeader);
+				}
+
+				// Handle header-to-body group transition within same row group
+				if (currentRowIndex === itemRowIndex && theadStruct && !itemIsTableHeader) {
+					closeTableHeaderGroup();
+					if (!tbodyStruct) {
+						tbodyStruct = pdfKitDoc.struct('TBody');
+						tableStruct.add(tbodyStruct);
+					}
+				}
+
+				// Handle cell transitions
+				if (itemColIndex !== null && itemColIndex !== currentColIndex) {
+					closeTableCell();
+					openTableCellElement(itemColIndex, itemIsTableHeader);
+				}
+			} else if (!itemTableRef && tableStruct && item.type !== 'vector') {
+				// Only close the table for non-vector items without table metadata.
+				// Vectors (table borders) are interleaved between cell content
+				// and should pass through as Artifacts without disrupting table structure.
+				closeTable();
+			}
+
+			// List structure detection from annotated list metadata
+			var listAnnotation = getListAnnotation(item);
+
+			if (listAnnotation) {
+				ensureSect();
+
+				// Open or switch list
+				if (!listStruct) {
+					openList(listAnnotation.listRef);
+				} else if (currentListRef !== listAnnotation.listRef) {
+					// Different list ref — determine nesting vs returning to parent vs sibling
+					if (listAnnotation.listRef._listRef === currentListRef) {
+						// Nesting: the new list's parent is the current list.
+						// Ensure the correct outer LI is open for the container item.
+						var containerItemIndex = listAnnotation.listRef._listItemIndex;
+						if (containerItemIndex !== null && containerItemIndex !== currentListItemIndex) {
+							closeListItem();
+							openListItem(containerItemIndex);
+						}
+						closeOpenBlock();
+						pushListContext();
+						openList(listAnnotation.listRef);
+					} else {
+						// Walk up the stack looking for a parent list that matches
+						var found = false;
+						while (listStack.length > 0) {
+							closeList();
+							popListContext();
+							if (currentListRef === listAnnotation.listRef) {
+								found = true;
+								break;
+							}
+						}
+						if (!found) {
+							// Completely different list
+							closeList();
+							openList(listAnnotation.listRef);
+						}
+					}
+				}
+
+				// Open or switch list item
+				if (listAnnotation.listItemIndex !== null && listAnnotation.listItemIndex !== currentListItemIndex) {
+					closeListItem();
+					openListItem(listAnnotation.listItemIndex);
+				}
+
+				// Marker items (bullets/numbers) fall through to the switch
+				// where vectors become Artifacts and text lines are rendered normally.
+			} else if (!listAnnotation && listStruct && item.type !== 'vector') {
+				closeAllLists();
+			}
+
+			// For items other than lines, mark the content as an Artifact so it's
+			// not included in the document structure.
 			switch (item.type) {
 				case 'vector':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					renderVector(item.item, patterns, pdfKitDoc);
+					pdfKitDoc.endMarkedContent();
 					break;
 				case 'line':
-					renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
+					{
+						var structType = deriveLineStructType(item);
+						var hasInlines = Array.isArray(item.item && item.item.inlines) && item.item.inlines.length > 0;
+						var hasExplicitLastLineInParagraph = typeof item.item.lastLineInParagraph === 'boolean';
+
+						if (!structType && hasInlines && hasExplicitLastLineInParagraph) {
+							structType = previousStructType;
+						}
+
+						if (!isInToc && hasPermittedBlockNode) {
+							ensureSect();
+						}
+
+						// If we don't have an open block, open one now.
+						if(!isOpenBlock && structType && pageSection) {
+							var parent = getContentParent();
+
+							blockItem = pdfKitDoc.struct(structType);
+							if (isInToc) {
+								tocGroupItem = pdfKitDoc.struct('TOCI');
+								parent.add(tocGroupItem);
+								tocGroupItem.add(blockItem);
+							} else {
+								parent.add(blockItem);
+							}
+							isOpenBlock = true;
+						}
+
+						if (isOpenBlock && structType && blockItem) {
+							var blockContent = pdfKitDoc.markStructureContent(structType);
+							blockItem.add(blockContent);
+							pdfKitDoc.markContent(structType);
+							renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc, { blockItem: blockItem, structType: structType });
+							pdfKitDoc.endMarkedContent();
+						} else {
+							pdfKitDoc.markContent('Artifact', { type: "Layout" });
+							renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
+							pdfKitDoc.endMarkedContent();
+						}
+
+						if (structType) {
+							previousStructType = structType;
+						}
+
+						// If this line is the last in the block, close the block.
+						// This allows multiple lines to be grouped into a single block structure.
+						if (isOpenBlock && item.item.lastLineInParagraph) {
+							closeOpenBlock();
+						}
+					}
 					break;
 				case 'image':
-					renderImage(item.item, item.item.x, item.item.y, pdfKitDoc);
+					renderFigure(item, function (image, x, y, doc) {
+						renderImage(image, x, y, doc);
+					});
 					break;
 				case 'svg':
-					renderSVG(item.item, item.item.x, item.item.y, pdfKitDoc, fontProvider);
+					renderFigure(item, function (svg, x, y, doc) {
+						renderSVG(svg, x, y, doc, fontProvider);
+					});
 					break;
 				case 'beginClip':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					beginClip(item.item, pdfKitDoc);
+					pdfKitDoc.endMarkedContent();
 					break;
 				case 'endClip':
+					pdfKitDoc.markContent('Artifact', { type: "Layout" });
 					endClip(pdfKitDoc);
+					pdfKitDoc.endMarkedContent();
 					break;
 			}
 			renderedItems++;
 			progressCallback(renderedItems / totalItems);
 		}
+		closeOpenBlock();
+		closeAllLists();
+		closeTocGroup();
+		closeTable();
+		closeTocSection();
+		if (pageSection && !isInToc) {
+			pageSection.end();
+			pageSection = null;
+		}
 		if (page.watermark) {
 			renderWatermark(page, pdfKitDoc);
 		}
+		
 	}
 }
 
@@ -454,7 +997,8 @@ function offsetText(y, inline) {
 	return newY;
 }
 
-function renderLine(line, x, y, patterns, pdfKitDoc) {
+function renderLine(line, x, y, patterns, pdfKitDoc, structContext) {
+
 	function preparePageNodeRefLine(_pageNodeRef, inline) {
 		var newWidth;
 		var diffWidth;
@@ -495,6 +1039,10 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 	textDecorator.drawBackground(line, x, y, patterns, pdfKitDoc);
 
 	//TODO: line.optimizeInlines();
+	var linkGroups = [];
+	var activeLinkStruct = null;
+	var activeLinkKey = null;
+
 	for (var i = 0, l = line.inlines.length; i < l; i++) {
 		var inline = line.inlines[i];
 		var shiftToBaseline = lineHeight - ((inline.font.ascender / 1000) * inline.fontSize) - descent;
@@ -503,17 +1051,46 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 			preparePageNodeRefLine(inline._pageNodeRef, inline);
 		}
 
+		// Determine link identity for this inline
+		var inlineLink = inline.link || null;
+		var inlineGoTo = inline.linkToDestination || null;
+		var inlineLinkToPage = inline.linkToPage || null;
+		var hasLink = !!(inlineLink || inlineGoTo || inlineLinkToPage);
+		var linkKey = hasLink ? (inlineLink || '') + '\0' + (inlineGoTo || '') + '\0' + (inlineLinkToPage || '') : null;
+
+		// Handle Link structure transitions when accessibility tagging is active
+		if (structContext && linkKey !== activeLinkKey) {
+			// Close previous Link struct if we were in one
+			if (activeLinkStruct) {
+				pdfKitDoc.endMarkedContent();
+				activeLinkStruct.end();
+				activeLinkStruct = null;
+			}
+
+			if (hasLink) {
+				// Entering a linked segment: end parent marking, open Link struct
+				pdfKitDoc.endMarkedContent();
+				activeLinkStruct = pdfKitDoc.struct('Link');
+				structContext.blockItem.add(activeLinkStruct);
+				var linkContent = pdfKitDoc.markStructureContent('Link');
+				activeLinkStruct.add(linkContent);
+				pdfKitDoc.markContent('Link');
+			} else if (activeLinkKey !== null) {
+				// Returning from a linked segment to non-linked: re-open parent marking
+				var parentContent = pdfKitDoc.markStructureContent(structContext.structType);
+				structContext.blockItem.add(parentContent);
+				pdfKitDoc.markContent(structContext.structType);
+			}
+
+			activeLinkKey = linkKey;
+		}
+
 		var options = {
 			lineBreak: false,
 			textWidth: inline.width,
 			characterSpacing: inline.characterSpacing,
-			wordCount: 1,
-			link: inline.link
+			wordCount: 1
 		};
-
-		if (inline.linkToDestination) {
-			options.goTo = inline.linkToDestination;
-		}
 
 		if (line.id && i === 0) {
 			options.destination = line.id;
@@ -531,17 +1108,58 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 		pdfKitDoc.fontSize(inline.fontSize);
 
 		var shiftedY = offsetText(y + shiftToBaseline, inline);
-		pdfKitDoc.text(inline.text, x + inline.x, shiftedY, options);
+		pdfKitDoc.text(`${inline.text}`, x + inline.x, shiftedY, options);
 
-		if (inline.linkToPage) {
-			var _ref = pdfKitDoc.ref({ Type: 'Action', S: 'GoTo', D: [inline.linkToPage, 0, 0] }).end();
-			pdfKitDoc.annotate(x + inline.x, shiftedY, inline.width, inline.height, {
-				Subtype: 'Link',
-				Dest: [inline.linkToPage - 1, 'XYZ', null, null, null]
-			});
+		// Collect link info — adjacent inlines with the same link target
+		// are merged into a single group so one annotation spans all of them.
+		if (hasLink) {
+			var lastGroup = linkGroups.length > 0 ? linkGroups[linkGroups.length - 1] : null;
+			if (lastGroup && lastGroup.link === inlineLink && lastGroup.goTo === inlineGoTo && lastGroup.linkToPage === inlineLinkToPage) {
+				lastGroup.width = (x + inline.x + inline.width) - lastGroup.x;
+			} else {
+				linkGroups.push({
+					x: x + inline.x,
+					y: shiftedY,
+					width: inline.width,
+					height: inline.height,
+					link: inlineLink,
+					goTo: inlineGoTo,
+					linkToPage: inlineLinkToPage
+				});
+			}
 		}
 
 	}
+
+	// Close any active Link struct and re-open parent marking
+	if (structContext && activeLinkStruct) {
+		pdfKitDoc.endMarkedContent();
+		activeLinkStruct.end();
+		activeLinkStruct = null;
+		// Re-open parent marking so it remains open for closeOpenBlock
+		var parentContent = pdfKitDoc.markStructureContent(structContext.structType);
+		structContext.blockItem.add(parentContent);
+		pdfKitDoc.markContent(structContext.structType);
+	}
+
+	// Create merged link annotations for adjacent inlines sharing the same target.
+	for (var gi = 0; gi < linkGroups.length; gi++) {
+		var group = linkGroups[gi];
+		if (group.link) {
+			pdfKitDoc.link(group.x, group.y, group.width, group.height, group.link);
+		}
+		if (group.goTo) {
+			pdfKitDoc.goTo(group.x, group.y, group.width, group.height, group.goTo);
+		}
+		if (group.linkToPage) {
+			pdfKitDoc.ref({ Type: 'Action', S: 'GoTo', D: [group.linkToPage, 0, 0] }).end();
+			pdfKitDoc.annotate(group.x, group.y, group.width, group.height, {
+				Subtype: 'Link',
+				Dest: [group.linkToPage - 1, 'XYZ', null, null, null]
+			});
+		}
+	}
+
 	// Decorations won't draw correctly for superscript
 	textDecorator.drawDecorations(line, x, y, pdfKitDoc);
 }
