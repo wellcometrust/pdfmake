@@ -921,6 +921,8 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 	textDecorator.drawBackground(line, x, y, patterns, pdfKitDoc);
 
 	//TODO: line.optimizeInlines();
+	var linkGroups = [];
+
 	for (var i = 0, l = line.inlines.length; i < l; i++) {
 		var inline = line.inlines[i];
 		var shiftToBaseline = lineHeight - ((inline.font.ascender / 1000) * inline.fontSize) - descent;
@@ -933,13 +935,8 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 			lineBreak: false,
 			textWidth: inline.width,
 			characterSpacing: inline.characterSpacing,
-			wordCount: 1,
-			link: inline.link
+			wordCount: 1
 		};
-
-		if (inline.linkToDestination) {
-			options.goTo = inline.linkToDestination;
-		}
 
 		if (line.id && i === 0) {
 			options.destination = line.id;
@@ -958,15 +955,50 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 
 		var shiftedY = offsetText(y + shiftToBaseline, inline);
 		pdfKitDoc.text(`${inline.text}`, x + inline.x, shiftedY, options);
-		if (inline.linkToPage) {
-			var _ref = pdfKitDoc.ref({ Type: 'Action', S: 'GoTo', D: [inline.linkToPage, 0, 0] }).end();
-			pdfKitDoc.annotate(x + inline.x, shiftedY, inline.width, inline.height, {
-				Subtype: 'Link',
-				Dest: [inline.linkToPage - 1, 'XYZ', null, null, null]
-			});
+
+		// Collect link info — adjacent inlines with the same link target
+		// are merged into a single group so one annotation spans all of them.
+		var inlineLink = inline.link || null;
+		var inlineGoTo = inline.linkToDestination || null;
+		var inlineLinkToPage = inline.linkToPage || null;
+
+		if (inlineLink || inlineGoTo || inlineLinkToPage) {
+			var lastGroup = linkGroups.length > 0 ? linkGroups[linkGroups.length - 1] : null;
+			if (lastGroup && lastGroup.link === inlineLink && lastGroup.goTo === inlineGoTo && lastGroup.linkToPage === inlineLinkToPage) {
+				lastGroup.width = (x + inline.x + inline.width) - lastGroup.x;
+			} else {
+				linkGroups.push({
+					x: x + inline.x,
+					y: shiftedY,
+					width: inline.width,
+					height: inline.height,
+					link: inlineLink,
+					goTo: inlineGoTo,
+					linkToPage: inlineLinkToPage
+				});
+			}
 		}
 
 	}
+
+	// Create merged link annotations for adjacent inlines sharing the same target.
+	for (var gi = 0; gi < linkGroups.length; gi++) {
+		var group = linkGroups[gi];
+		if (group.link) {
+			pdfKitDoc.link(group.x, group.y, group.width, group.height, group.link);
+		}
+		if (group.goTo) {
+			pdfKitDoc.goTo(group.x, group.y, group.width, group.height, group.goTo);
+		}
+		if (group.linkToPage) {
+			pdfKitDoc.ref({ Type: 'Action', S: 'GoTo', D: [group.linkToPage, 0, 0] }).end();
+			pdfKitDoc.annotate(group.x, group.y, group.width, group.height, {
+				Subtype: 'Link',
+				Dest: [group.linkToPage - 1, 'XYZ', null, null, null]
+			});
+		}
+	}
+
 	// Decorations won't draw correctly for superscript
 	textDecorator.drawDecorations(line, x, y, pdfKitDoc);
 }
