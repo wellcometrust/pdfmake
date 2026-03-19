@@ -16268,7 +16268,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 6876:
+/***/ 70546:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55848,7 +55848,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(58974);
+var FileSaver = __webpack_require__(7372);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58804,7 +58804,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(6876));
+var PdfKit = _interopDefault(__webpack_require__(70546));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59632,13 +59632,15 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 							blockContent = pdfKitDoc.markStructureContent('Lbl');
 							labelItem.add(blockContent);
 							pdfKitDoc.markContent('Lbl');
+							renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc, { blockItem: labelItem, structType: 'Lbl' });
 						} else if (isOpenBlock && structType && blockItem) {
 							blockContent = pdfKitDoc.markStructureContent(structType);
 							blockItem.add(blockContent);
 							pdfKitDoc.markContent(structType);
+							renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc, { blockItem: blockItem, structType: structType });
+						} else {
+							renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
 						}
-					
-						renderLine(item.item, item.item.x, item.item.y, patterns, pdfKitDoc);
 
 						if (structType) {
 							previousStructType = structType;
@@ -59708,7 +59710,7 @@ function offsetText(y, inline) {
 	return newY;
 }
 
-function renderLine(line, x, y, patterns, pdfKitDoc) {	
+function renderLine(line, x, y, patterns, pdfKitDoc, structContext) {
 
 	function preparePageNodeRefLine(_pageNodeRef, inline) {
 		var newWidth;
@@ -59751,6 +59753,8 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 
 	//TODO: line.optimizeInlines();
 	var linkGroups = [];
+	var activeLinkStruct = null;
+	var activeLinkKey = null;
 
 	for (var i = 0, l = line.inlines.length; i < l; i++) {
 		var inline = line.inlines[i];
@@ -59758,6 +59762,40 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 
 		if (inline._pageNodeRef) {
 			preparePageNodeRefLine(inline._pageNodeRef, inline);
+		}
+
+		// Determine link identity for this inline
+		var inlineLink = inline.link || null;
+		var inlineGoTo = inline.linkToDestination || null;
+		var inlineLinkToPage = inline.linkToPage || null;
+		var hasLink = !!(inlineLink || inlineGoTo || inlineLinkToPage);
+		var linkKey = hasLink ? (inlineLink || '') + '\0' + (inlineGoTo || '') + '\0' + (inlineLinkToPage || '') : null;
+
+		// Handle Link structure transitions when accessibility tagging is active
+		if (structContext && linkKey !== activeLinkKey) {
+			// Close previous Link struct if we were in one
+			if (activeLinkStruct) {
+				pdfKitDoc.endMarkedContent();
+				activeLinkStruct.end();
+				activeLinkStruct = null;
+			}
+
+			if (hasLink) {
+				// Entering a linked segment: end parent marking, open Link struct
+				pdfKitDoc.endMarkedContent();
+				activeLinkStruct = pdfKitDoc.struct('Link');
+				structContext.blockItem.add(activeLinkStruct);
+				var linkContent = pdfKitDoc.markStructureContent('Link');
+				activeLinkStruct.add(linkContent);
+				pdfKitDoc.markContent('Link');
+			} else if (activeLinkKey !== null) {
+				// Returning from a linked segment to non-linked: re-open parent marking
+				var parentContent = pdfKitDoc.markStructureContent(structContext.structType);
+				structContext.blockItem.add(parentContent);
+				pdfKitDoc.markContent(structContext.structType);
+			}
+
+			activeLinkKey = linkKey;
 		}
 
 		var options = {
@@ -59787,11 +59825,7 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 
 		// Collect link info — adjacent inlines with the same link target
 		// are merged into a single group so one annotation spans all of them.
-		var inlineLink = inline.link || null;
-		var inlineGoTo = inline.linkToDestination || null;
-		var inlineLinkToPage = inline.linkToPage || null;
-
-		if (inlineLink || inlineGoTo || inlineLinkToPage) {
+		if (hasLink) {
 			var lastGroup = linkGroups.length > 0 ? linkGroups[linkGroups.length - 1] : null;
 			if (lastGroup && lastGroup.link === inlineLink && lastGroup.goTo === inlineGoTo && lastGroup.linkToPage === inlineLinkToPage) {
 				lastGroup.width = (x + inline.x + inline.width) - lastGroup.x;
@@ -59808,6 +59842,17 @@ function renderLine(line, x, y, patterns, pdfKitDoc) {
 			}
 		}
 
+	}
+
+	// Close any active Link struct and re-open parent marking
+	if (structContext && activeLinkStruct) {
+		pdfKitDoc.endMarkedContent();
+		activeLinkStruct.end();
+		activeLinkStruct = null;
+		// Re-open parent marking so it remains open for closeOpenBlock
+		var parentContent = pdfKitDoc.markStructureContent(structContext.structType);
+		structContext.blockItem.add(parentContent);
+		pdfKitDoc.markContent(structContext.structType);
 	}
 
 	// Create merged link annotations for adjacent inlines sharing the same target.
@@ -62378,7 +62423,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 58974:
+/***/ 7372:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),
