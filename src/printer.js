@@ -719,7 +719,9 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		if (item.item && item.item._listRef) {
 			return {
 				listRef: item.item._listRef,
-				listItemIndex: item.item._listItemIndex
+				listItemIndex: item.item._listItemIndex,
+				parentListId: item.item._parentListId || null,
+				parentListItemIndex: item.item._parentListItemIndex !== undefined ? item.item._parentListItemIndex : null
 			};
 		}
 		// Check the _node (content lines carry annotations via the node)
@@ -727,7 +729,9 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		if (node && node._listRef) {
 			return {
 				listRef: node._listRef,
-				listItemIndex: node._listItemIndex
+				listItemIndex: node._listItemIndex,
+				parentListId: node._parentListId || null,
+				parentListItemIndex: node._parentListItemIndex !== undefined ? node._parentListItemIndex : null
 			};
 		}
 		return null;
@@ -770,7 +774,8 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			var itemNodeName = item.item && item.item._node && item.item._node.nodeName;
 			var hasPermittedBlockNode = permittedBlockElements.includes(itemNodeName);
 			var itemStyles = item.item && item.item._node && item.item._node.style ? item.item._node.style : [];
-			var isTocItem = itemStyles.includes('tocItem');
+			var itemStylesArray = Array.isArray(itemStyles) ? itemStyles : [itemStyles];
+			var isTocItem = itemStylesArray.includes('tocItem');
 
 			if (isTocItem && !isInToc) {
 				createPageSection('TOC');
@@ -836,10 +841,10 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 					openList(listAnnotation.listRef);
 				} else if (currentListRef !== listAnnotation.listRef) {
 					// Different list ref — determine nesting vs returning to parent vs sibling
-					if (listAnnotation.listRef._listRef === currentListRef) {
+					if (listAnnotation.parentListId === currentListRef) {
 						// Nesting: the new list's parent is the current list.
 						// Ensure the correct outer LI is open for the container item.
-						var containerItemIndex = listAnnotation.listRef._listItemIndex;
+						var containerItemIndex = listAnnotation.parentListItemIndex;
 						if (containerItemIndex !== null && containerItemIndex !== currentListItemIndex) {
 							closeListItem();
 							openListItem(containerItemIndex);

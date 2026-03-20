@@ -35,6 +35,8 @@ function extractNodeMeta(node) {
 	};
 	if (node._listRef !== undefined) { meta._listRef = node._listRef; }
 	if (node._listItemIndex !== undefined) { meta._listItemIndex = node._listItemIndex; }
+	if (node._parentListId !== undefined) { meta._parentListId = node._parentListId; }
+	if (node._parentListItemIndex !== undefined) { meta._parentListItemIndex = node._parentListItemIndex; }
 	if (node._tableRef !== undefined) { meta._tableRef = node._tableRef; }
 	if (node._tableRowIndex !== undefined) { meta._tableRowIndex = node._tableRowIndex; }
 	if (node._tableColIndex !== undefined) { meta._tableColIndex = node._tableColIndex; }
@@ -58,6 +60,7 @@ function LayoutBuilder(pageSize, pageMargins, imageMeasure, svgMeasure) {
 	this.svgMeasure = svgMeasure;
 	this.tableLayouts = {};
 	this.nestedLevel = 0;
+	this._structIdCounter = 0;
 }
 
 LayoutBuilder.prototype.registerTableLayouts = function (tableLayouts) {
@@ -900,10 +903,15 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 	this.writer.context().addMargin(gapSize.width);
 
 	var nextMarker;
+	var listId = ++self._structIdCounter;
+	// Capture parent list info if this list node was itself annotated as a list item
+	var parentListId = node._listRef !== undefined ? node._listRef : null;
+	var parentListItemIndex = node._listItemIndex !== undefined ? node._listItemIndex : null;
+
 	this.tracker.auto('lineAdded', addMarkerToFirstLeaf, function () {
 		items.forEach(function (item, itemIndex) {
 			// Annotate list item nodes for accessibility tagging
-			annotateListItemNode(item, node, itemIndex);
+			annotateListItemNode(item, listId, itemIndex);
 			nextMarker = item.listMarker;
 			self.processNode(item);
 			addAll(node.positions, item.positions);
@@ -912,12 +920,16 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 
 	this.writer.context().addMargin(-gapSize.width);
 
-	function annotateListItemNode(itemNode, listRef, itemIndex) {
-		itemNode._listRef = listRef;
+	function annotateListItemNode(itemNode, listId, itemIndex) {
+		itemNode._listRef = listId;
 		itemNode._listItemIndex = itemIndex;
+		if (parentListId !== null) {
+			itemNode._parentListId = parentListId;
+			itemNode._parentListItemIndex = parentListItemIndex;
+		}
 		if (itemNode.stack) {
 			for (var si = 0; si < itemNode.stack.length; si++) {
-				annotateListItemNode(itemNode.stack[si], listRef, itemIndex);
+				annotateListItemNode(itemNode.stack[si], listId, itemIndex);
 			}
 		}
 	}
@@ -956,14 +968,16 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 	var headerRows = tableNode.table.headerRows || 0;
 	var isAccessibleTable = tableNode.layout === 'wellcomeTableLayout';
 
-	function annotateNode(node, tableRef, rowIndex, colIndex, isHeader) {
-		node._tableRef = tableRef;
+	var tableId = isAccessibleTable ? ++this._structIdCounter : null;
+
+	function annotateNode(node, tableId, rowIndex, colIndex, isHeader) {
+		node._tableRef = tableId;
 		node._tableRowIndex = rowIndex;
 		node._tableColIndex = colIndex;
 		node._isTableHeader = isHeader;
 		if (node.stack) {
 			for (var si = 0; si < node.stack.length; si++) {
-				annotateNode(node.stack[si], tableRef, rowIndex, colIndex, isHeader);
+				annotateNode(node.stack[si], tableId, rowIndex, colIndex, isHeader);
 			}
 		}
 	}
@@ -972,7 +986,7 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 		// Annotate each cell with table metadata for accessibility tagging
 		if (isAccessibleTable) {
 			for (var ci = 0; ci < tableNode.table.body[i].length; ci++) {
-				annotateNode(tableNode.table.body[i][ci], tableNode, i, ci, (i < headerRows));
+				annotateNode(tableNode.table.body[i][ci], tableId, i, ci, (i < headerRows));
 			}
 		}
 
