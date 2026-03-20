@@ -305,4 +305,93 @@ describe('PDF Accessibility', function () {
 		assert(mcTags.indexOf('Artifact') !== -1, 'vectors should be marked as Artifact');
 	});
 
+	describe('link rendering and annotations', function () {
+
+		var linkSpy;
+
+		beforeEach(function () {
+			linkSpy = sinon.spy(PdfKit.prototype, 'link');
+		});
+
+		afterEach(function () {
+			linkSpy.restore();
+		});
+
+		it('should create separate Link structs and annotations for adjacent inlines with different targets', function () {
+			printer = new Printer(fontDescriptors);
+			printer.createPdfKitDocument({
+				content: [
+					{
+						text: [
+							{ text: 'Link A ', link: 'https://a.example.com' },
+							{ text: 'Link B', link: 'https://b.example.com' }
+						],
+						nodeName: 'P'
+					}
+				]
+			});
+
+			var tags = structTags();
+			var linkCount = tags.filter(function (t) { return t === 'Link'; }).length;
+			assert.equal(linkCount, 2, 'should create one Link struct per distinct target');
+
+			assert.equal(linkSpy.callCount, 2, 'should create one annotation per distinct link target');
+			assert.equal(linkSpy.getCall(0).args[4], 'https://a.example.com');
+			assert.equal(linkSpy.getCall(1).args[4], 'https://b.example.com');
+
+			// markContent/endMarkedContent surplus should remain 1 (final structure-content marking)
+			var surplus = markContentSpy.callCount - endMarkedContentSpy.callCount;
+			assert.equal(surplus, 1, 'markContent should be balanced (surplus 1)');
+		});
+
+		it('should create one Link struct and annotation for a linked inline sandwiched between non-linked inlines', function () {
+			printer = new Printer(fontDescriptors);
+			printer.createPdfKitDocument({
+				content: [
+					{
+						text: [
+							{ text: 'Before ' },
+							{ text: 'Click here', link: 'https://example.com' },
+							{ text: ' after' }
+						],
+						nodeName: 'P'
+					}
+				]
+			});
+
+			var tags = structTags();
+			var linkCount = tags.filter(function (t) { return t === 'Link'; }).length;
+			assert.equal(linkCount, 1, 'should create exactly one Link struct');
+
+			assert.equal(linkSpy.callCount, 1, 'should create exactly one link annotation');
+			assert.equal(linkSpy.getCall(0).args[4], 'https://example.com');
+
+			var surplus = markContentSpy.callCount - endMarkedContentSpy.callCount;
+			assert.equal(surplus, 1, 'markContent should be balanced (surplus 1)');
+		});
+
+		it('should merge adjacent inlines sharing the same link target into one annotation', function () {
+			printer = new Printer(fontDescriptors);
+			printer.createPdfKitDocument({
+				content: [
+					{
+						text: [
+							{ text: 'Click ', link: 'https://example.com' },
+							{ text: 'here', link: 'https://example.com' }
+						],
+						nodeName: 'P'
+					}
+				]
+			});
+
+			var tags = structTags();
+			var linkCount = tags.filter(function (t) { return t === 'Link'; }).length;
+			assert.equal(linkCount, 1, 'same-target adjacent inlines should share one Link struct');
+
+			assert.equal(linkSpy.callCount, 1, 'same-target adjacent inlines should produce one annotation');
+			assert.equal(linkSpy.getCall(0).args[4], 'https://example.com');
+		});
+
+	});
+
 });

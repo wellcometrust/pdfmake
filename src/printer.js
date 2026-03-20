@@ -896,7 +896,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 							structType = previousStructType;
 						}
 
-						if (!isInToc && hasPermittedBlockNode) {
+						if (!isInToc && structType) {
 							ensureSect();
 						}
 
@@ -1063,6 +1063,7 @@ function renderLine(line, x, y, patterns, pdfKitDoc, structContext) {
 		// Handle Link structure transitions when accessibility tagging is active
 		if (structContext && linkKey !== activeLinkKey) {
 			// Close previous Link struct if we were in one
+			var wasInLink = !!activeLinkStruct;
 			if (activeLinkStruct) {
 				pdfKitDoc.endMarkedContent();
 				activeLinkStruct.end();
@@ -1070,14 +1071,16 @@ function renderLine(line, x, y, patterns, pdfKitDoc, structContext) {
 			}
 
 			if (hasLink) {
-				// Entering a linked segment: end parent marking, open Link struct
-				pdfKitDoc.endMarkedContent();
+				if (!wasInLink) {
+					// Entering a linked segment from non-linked: end parent marking
+					pdfKitDoc.endMarkedContent();
+				}
 				activeLinkStruct = pdfKitDoc.struct('Link');
 				structContext.blockItem.add(activeLinkStruct);
 				var linkContent = pdfKitDoc.markStructureContent('Link');
 				activeLinkStruct.add(linkContent);
 				pdfKitDoc.markContent('Link');
-			} else if (activeLinkKey !== null) {
+			} else if (wasInLink) {
 				// Returning from a linked segment to non-linked: re-open parent marking
 				var parentContent = pdfKitDoc.markStructureContent(structContext.structType);
 				structContext.blockItem.add(parentContent);
