@@ -564,7 +564,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			return;
 		}
 		closeOpenBlock();
-		closeList();
+		closeAllLists();
 		currentCell.end();
 		currentCell = null;
 		currentColIndex = null;
@@ -976,6 +976,8 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		}
 		
 	}
+
+	pdfDocument.end();
 }
 
 /**

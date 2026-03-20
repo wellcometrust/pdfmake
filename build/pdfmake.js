@@ -1,4 +1,4 @@
-/*! @wellcometrust/pdfmake v2.0.0, @license MIT, @link https://github.com/wellcometrust/pdfmake#readme */
+/*! @wellcometrust/pdfmake v2.0.1, @license MIT, @link https://github.com/wellcometrust/pdfmake#readme */
 (function webpackUniversalModuleDefinition(root, factory) {
 	if(typeof exports === 'object' && typeof module === 'object')
 		module.exports = factory();
@@ -15212,6 +15212,35 @@ function addAll(target, otherArray) {
     target.push(item);
   });
 }
+function extractNodeMeta(node) {
+  var meta = {
+    nodeName: node.nodeName,
+    style: node.style,
+    positions: node.positions
+  };
+  if (node._listRef !== undefined) {
+    meta._listRef = node._listRef;
+  }
+  if (node._listItemIndex !== undefined) {
+    meta._listItemIndex = node._listItemIndex;
+  }
+  if (node._tableRef !== undefined) {
+    meta._tableRef = node._tableRef;
+  }
+  if (node._tableRowIndex !== undefined) {
+    meta._tableRowIndex = node._tableRowIndex;
+  }
+  if (node._tableColIndex !== undefined) {
+    meta._tableColIndex = node._tableColIndex;
+  }
+  if (node._isTableHeader !== undefined) {
+    meta._isTableHeader = node._isTableHeader;
+  }
+  if (node._span !== undefined) {
+    meta._span = node._span;
+  }
+  return meta;
+}
 
 /**
  * Creates an instance of LayoutBuilder - layout engine which turns document-definition-object
@@ -16144,7 +16173,7 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 LayoutBuilder.prototype.processLeaf = function (node) {
   var line = this.buildNextLine(node);
   if (line) {
-    line._node = node;
+    line._node = extractNodeMeta(node);
   }
   var currentHeight = line ? line.getHeight() : 0;
   var maxHeight = node.maxHeight || -1;
@@ -16175,7 +16204,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
     node.positions.push(positions);
     line = this.buildNextLine(node);
     if (line) {
-      line._node = node;
+      line._node = extractNodeMeta(node);
       currentHeight += line.getHeight();
     }
   }
@@ -16276,7 +16305,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 64693:
+/***/ 55698:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55856,7 +55885,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(16538);
+var FileSaver = __webpack_require__(96466);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -58812,7 +58841,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(64693));
+var PdfKit = _interopDefault(__webpack_require__(55698));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59401,7 +59430,7 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 			return;
 		}
 		closeOpenBlock();
-		closeList();
+		closeAllLists();
 		currentCell.end();
 		currentCell = null;
 		currentColIndex = null;
@@ -59813,6 +59842,8 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback)
 		}
 		
 	}
+
+	pdfDocument.end();
 }
 
 /**
@@ -62547,7 +62578,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 16538:
+/***/ 96466:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),

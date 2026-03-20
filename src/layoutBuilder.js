@@ -27,6 +27,22 @@ function addAll(target, otherArray) {
 	});
 }
 
+function extractNodeMeta(node) {
+	var meta = {
+		nodeName: node.nodeName,
+		style: node.style,
+		positions: node.positions
+	};
+	if (node._listRef !== undefined) { meta._listRef = node._listRef; }
+	if (node._listItemIndex !== undefined) { meta._listItemIndex = node._listItemIndex; }
+	if (node._tableRef !== undefined) { meta._tableRef = node._tableRef; }
+	if (node._tableRowIndex !== undefined) { meta._tableRowIndex = node._tableRowIndex; }
+	if (node._tableColIndex !== undefined) { meta._tableColIndex = node._tableColIndex; }
+	if (node._isTableHeader !== undefined) { meta._isTableHeader = node._isTableHeader; }
+	if (node._span !== undefined) { meta._span = node._span; }
+	return meta;
+}
+
 /**
  * Creates an instance of LayoutBuilder - layout engine which turns document-definition-object
  * into a set of pages, lines, inlines and vectors ready to be rendered into a PDF
@@ -1025,7 +1041,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 	var line = this.buildNextLine(node);
 
 	if (line) {
-		line._node = node;
+		line._node = extractNodeMeta(node);
 	}
 	var currentHeight = (line) ? line.getHeight() : 0;
 	var maxHeight = node.maxHeight || -1;
@@ -1062,7 +1078,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 		node.positions.push(positions);
 		line = this.buildNextLine(node);
 		if (line) {
-			line._node = node;
+			line._node = extractNodeMeta(node);
 			currentHeight += line.getHeight();
 		}
 	}
