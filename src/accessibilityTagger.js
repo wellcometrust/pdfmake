@@ -91,15 +91,19 @@ AccessibilityTagger.prototype.finalise = function () {
 // ============================================================================
 
 AccessibilityTagger.prototype.beginPage = function () {
-	// Close anything left open from previous page
-	this._closeTextElement();
-	// Don't close list/table elements here - they may span pages
-	// Instead, we handle this via the page break mechanism
+	// Close all open structures (tables, lists, text) before ending the Sect,
+	// since they are children of the current Sect and must be ended first.
+	this._closeAllOpenStructures();
 
-	if (!this.currentSect) {
-		this.currentSect = this.doc.struct('Sect');
-		this.documentElement.add(this.currentSect);
+	// Close the previous Sect if one exists
+	if (this.currentSect) {
+		this.currentSect.end();
+		this.currentSect = null;
 	}
+
+	// Create a new Sect for this page
+	this.currentSect = this.doc.struct('Sect');
+	this.documentElement.add(this.currentSect);
 };
 
 AccessibilityTagger.prototype.endPage = function () {
@@ -316,12 +320,20 @@ AccessibilityTagger.prototype.beginRow = function () {
 	if (!this.currentTable) { return; }
 	var rowType = this.tableIsTOC ? 'TOCI' : 'TR';
 	this.currentRow = this.doc.struct(rowType);
-	var parent = this.currentTHead || this.currentTBody || this.currentTable;
+	// For TOC, rows go directly under TOC (no THead/TBody)
+	var parent = this.tableIsTOC ? this.currentTable : (this.currentTHead || this.currentTBody || this.currentTable);
 	parent.add(this.currentRow);
 };
 
 AccessibilityTagger.prototype.endRow = function () {
 	this._closeTextElement();
+
+	// Close any open list structures before ending the cell,
+	// since cell.end() cascades to children and would leave stale references.
+	while (this.currentList) {
+		this.endList();
+	}
+
 	if (this.currentCell) {
 		this.currentCell.end();
 		this.currentCell = null;
@@ -336,6 +348,12 @@ AccessibilityTagger.prototype.beginCell = function (isHeader) {
 	if (!this.currentRow) { return; }
 
 	this._closeTextElement();
+
+	// Close any open list structures before ending the previous cell,
+	// since cell.end() cascades to children and would leave stale references.
+	while (this.currentList) {
+		this.endList();
+	}
 
 	if (this.currentCell) {
 		this.currentCell.end();
@@ -526,6 +544,10 @@ AccessibilityTagger.prototype._processListContext = function (listCtx) {
 AccessibilityTagger.prototype._getCurrentParent = function () {
 	if (this.currentCell) {
 		return this.currentCell;
+	}
+	// For TOC tables, content goes directly under TOCI (the row), not a cell
+	if (this.tableIsTOC && this.currentRow) {
+		return this.currentRow;
 	}
 	if (this.currentLBody) {
 		return this.currentLBody;

@@ -29,6 +29,26 @@ function addAll(target, otherArray) {
 }
 
 /**
+ * Checks whether a list item (or any node) contains a nested list (ul or ol),
+ * including when wrapped in a stack or columns.
+ */
+function _itemContainsList(node) {
+	if (!node) { return false; }
+	if (node.ul || node.ol) { return true; }
+	if (node.stack) {
+		for (var i = 0; i < node.stack.length; i++) {
+			if (_itemContainsList(node.stack[i])) { return true; }
+		}
+	}
+	if (node.columns) {
+		for (var j = 0; j < node.columns.length; j++) {
+			if (_itemContainsList(node.columns[j])) { return true; }
+		}
+	}
+	return false;
+}
+
+/**
  * Creates an instance of LayoutBuilder - layout engine which turns document-definition-object
  * into a set of pages, lines, inlines and vectors ready to be rendered into a PDF
  *
@@ -765,6 +785,11 @@ LayoutBuilder.prototype.processRow = function ({ marginX = [0, 0], dontBreakRows
 	for (var i = 0, l = cells.length; i < l; i++) {
 		var cell = cells[i];
 
+		// Update accessibility table context with current column index
+		if (self._accessibilityTableContext && self._accessibilityTableContext.tagged) {
+			self._accessibilityTableContext.colIndex = i;
+		}
+
 		// Page change handler
 
 		this.tracker.auto('pageChanged', storePageBreakClosure, function () {
@@ -902,7 +927,7 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 			var listCtx = self._accessibilityListStack[self._accessibilityListStack.length - 1];
 			listCtx.itemIndex = idx;
 			listCtx.isFirstNodeInItem = true;
-			listCtx.isLastNodeInItem = (!item.ol && !item.ul);
+			listCtx.isLastNodeInItem = !_itemContainsList(item);
 			nextMarker = item.listMarker;
 			self.processNode(item);
 			listCtx.isFirstNodeInItem = false;
@@ -1076,6 +1101,18 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 
 	while (line && (maxHeight === -1 || currentHeight < maxHeight)) {
 		// Annotate line with accessibility context
+		// Snapshot tableContext (clone) since the shared object is mutated per-column
+		var tableCtxSnapshot = this._accessibilityTableContext ? {
+			tagged: this._accessibilityTableContext.tagged,
+			isTOC: this._accessibilityTableContext.isTOC,
+			rowIndex: this._accessibilityTableContext.rowIndex,
+			isHeader: this._accessibilityTableContext.isHeader,
+			headerRowCount: this._accessibilityTableContext.headerRowCount,
+			totalRows: this._accessibilityTableContext.totalRows,
+			isFirstRow: this._accessibilityTableContext.isFirstRow,
+			isLastRow: this._accessibilityTableContext.isLastRow,
+			colIndex: this._accessibilityTableContext.colIndex
+		} : null;
 		line._accessibilityContext = {
 			role: accessibilityRole,
 			isFirstLine: isFirstLine,
@@ -1086,7 +1123,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 				isFirstInItem: isFirstLine && this._accessibilityListStack[this._accessibilityListStack.length - 1].isFirstNodeInItem,
 				isLastInItem: line.lastLineInParagraph && this._accessibilityListStack[this._accessibilityListStack.length - 1].isLastNodeInItem
 			} : null,
-			tableContext: this._accessibilityTableContext
+			tableContext: tableCtxSnapshot
 		};
 		isFirstLine = false;
 

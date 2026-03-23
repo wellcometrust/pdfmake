@@ -1,4 +1,4 @@
-/*! pdfmake v0.2.23, @license MIT, @link http://pdfmake.org */
+/*! @wellcometrust/pdfmake v2.0.4, @license MIT, @link http://pdfmake.org */
 (function webpackUniversalModuleDefinition(root, factory) {
 	if(typeof exports === 'object' && typeof module === 'object')
 		module.exports = factory();
@@ -15215,6 +15215,34 @@ function addAll(target, otherArray) {
 }
 
 /**
+ * Checks whether a list item (or any node) contains a nested list (ul or ol),
+ * including when wrapped in a stack or columns.
+ */
+function _itemContainsList(node) {
+  if (!node) {
+    return false;
+  }
+  if (node.ul || node.ol) {
+    return true;
+  }
+  if (node.stack) {
+    for (var i = 0; i < node.stack.length; i++) {
+      if (_itemContainsList(node.stack[i])) {
+        return true;
+      }
+    }
+  }
+  if (node.columns) {
+    for (var j = 0; j < node.columns.length; j++) {
+      if (_itemContainsList(node.columns[j])) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Creates an instance of LayoutBuilder - layout engine which turns document-definition-object
  * into a set of pages, lines, inlines and vectors ready to be rendered into a PDF
  *
@@ -15910,6 +15938,11 @@ LayoutBuilder.prototype.processRow = function (_ref) {
   for (var i = 0, l = cells.length; i < l; i++) {
     var cell = cells[i];
 
+    // Update accessibility table context with current column index
+    if (self._accessibilityTableContext && self._accessibilityTableContext.tagged) {
+      self._accessibilityTableContext.colIndex = i;
+    }
+
     // Page change handler
 
     this.tracker.auto('pageChanged', storePageBreakClosure, function () {
@@ -16038,7 +16071,7 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
       var listCtx = self._accessibilityListStack[self._accessibilityListStack.length - 1];
       listCtx.itemIndex = idx;
       listCtx.isFirstNodeInItem = true;
-      listCtx.isLastNodeInItem = !item.ol && !item.ul;
+      listCtx.isLastNodeInItem = !_itemContainsList(item);
       nextMarker = item.listMarker;
       self.processNode(item);
       listCtx.isFirstNodeInItem = false;
@@ -16191,6 +16224,18 @@ LayoutBuilder.prototype.processLeaf = function (node) {
   var isFirstLine = true;
   while (line && (maxHeight === -1 || currentHeight < maxHeight)) {
     // Annotate line with accessibility context
+    // Snapshot tableContext (clone) since the shared object is mutated per-column
+    var tableCtxSnapshot = this._accessibilityTableContext ? {
+      tagged: this._accessibilityTableContext.tagged,
+      isTOC: this._accessibilityTableContext.isTOC,
+      rowIndex: this._accessibilityTableContext.rowIndex,
+      isHeader: this._accessibilityTableContext.isHeader,
+      headerRowCount: this._accessibilityTableContext.headerRowCount,
+      totalRows: this._accessibilityTableContext.totalRows,
+      isFirstRow: this._accessibilityTableContext.isFirstRow,
+      isLastRow: this._accessibilityTableContext.isLastRow,
+      colIndex: this._accessibilityTableContext.colIndex
+    } : null;
     line._accessibilityContext = {
       role: accessibilityRole,
       isFirstLine: isFirstLine,
@@ -16201,7 +16246,7 @@ LayoutBuilder.prototype.processLeaf = function (node) {
         isFirstInItem: isFirstLine && this._accessibilityListStack[this._accessibilityListStack.length - 1].isFirstNodeInItem,
         isLastInItem: line.lastLineInParagraph && this._accessibilityListStack[this._accessibilityListStack.length - 1].isLastNodeInItem
       } : null,
-      tableContext: this._accessibilityTableContext
+      tableContext: tableCtxSnapshot
     };
     isFirstLine = false;
     var positions = this.writer.addLine(line);
@@ -16321,7 +16366,7 @@ module.exports = LayoutBuilder;
 
 /***/ }),
 
-/***/ 24543:
+/***/ 32596:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55986,15 +56031,19 @@ AccessibilityTagger.prototype.finalise = function () {
 // ============================================================================
 
 AccessibilityTagger.prototype.beginPage = function () {
-	// Close anything left open from previous page
-	this._closeTextElement();
-	// Don't close list/table elements here - they may span pages
-	// Instead, we handle this via the page break mechanism
+	// Close all open structures (tables, lists, text) before ending the Sect,
+	// since they are children of the current Sect and must be ended first.
+	this._closeAllOpenStructures();
 
-	if (!this.currentSect) {
-		this.currentSect = this.doc.struct('Sect');
-		this.documentElement.add(this.currentSect);
+	// Close the previous Sect if one exists
+	if (this.currentSect) {
+		this.currentSect.end();
+		this.currentSect = null;
 	}
+
+	// Create a new Sect for this page
+	this.currentSect = this.doc.struct('Sect');
+	this.documentElement.add(this.currentSect);
 };
 
 AccessibilityTagger.prototype.endPage = function () {
@@ -56211,12 +56260,20 @@ AccessibilityTagger.prototype.beginRow = function () {
 	if (!this.currentTable) { return; }
 	var rowType = this.tableIsTOC ? 'TOCI' : 'TR';
 	this.currentRow = this.doc.struct(rowType);
-	var parent = this.currentTHead || this.currentTBody || this.currentTable;
+	// For TOC, rows go directly under TOC (no THead/TBody)
+	var parent = this.tableIsTOC ? this.currentTable : (this.currentTHead || this.currentTBody || this.currentTable);
 	parent.add(this.currentRow);
 };
 
 AccessibilityTagger.prototype.endRow = function () {
 	this._closeTextElement();
+
+	// Close any open list structures before ending the cell,
+	// since cell.end() cascades to children and would leave stale references.
+	while (this.currentList) {
+		this.endList();
+	}
+
 	if (this.currentCell) {
 		this.currentCell.end();
 		this.currentCell = null;
@@ -56231,6 +56288,12 @@ AccessibilityTagger.prototype.beginCell = function (isHeader) {
 	if (!this.currentRow) { return; }
 
 	this._closeTextElement();
+
+	// Close any open list structures before ending the previous cell,
+	// since cell.end() cascades to children and would leave stale references.
+	while (this.currentList) {
+		this.endList();
+	}
 
 	if (this.currentCell) {
 		this.currentCell.end();
@@ -56422,6 +56485,10 @@ AccessibilityTagger.prototype._getCurrentParent = function () {
 	if (this.currentCell) {
 		return this.currentCell;
 	}
+	// For TOC tables, content goes directly under TOCI (the row), not a cell
+	if (this.tableIsTOC && this.currentRow) {
+		return this.currentRow;
+	}
 	if (this.currentLBody) {
 		return this.currentLBody;
 	}
@@ -56569,7 +56636,7 @@ var isObject = (__webpack_require__(91867).isObject);
 var isUndefined = (__webpack_require__(91867).isUndefined);
 //var isNull = require('../helpers').isNull;
 var pack = (__webpack_require__(91867).pack);
-var FileSaver = __webpack_require__(29314);
+var FileSaver = __webpack_require__(80735);
 var saveAs = FileSaver.saveAs;
 
 var defaultClientFonts = {
@@ -59524,7 +59591,7 @@ function _interopDefault(ex) {
 	return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex;
 }
 
-var PdfKit = _interopDefault(__webpack_require__(24543));
+var PdfKit = _interopDefault(__webpack_require__(32596));
 
 function getEngineInstance() {
 	return PdfKit;
@@ -59946,6 +60013,8 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback,
 	pdfKitDoc._pdfMakePages = pages;
 	pdfKitDoc.addPage();
 
+	console.log('Rendering page 1 of ' + pages.length);
+
 	var totalItems = 0;
 	if (progressCallback) {
 		pages.forEach(function (page) {
@@ -59976,11 +60045,22 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback,
 
 		if (tagger) {
 			tagger.beginPage();
+			// Reset tagger state so that structures (tables, lists) that span
+			// across pages are reopened fresh under the new Sect.
+			taggerState.prevTableContext = null;
+			taggerState.prevListContext = null;
+			taggerState.currentTableHeaderOpen = false;
+			taggerState.currentTableBodyOpen = false;
+			taggerState._prevRowIndex = -1;
+			taggerState._prevColIndex = -1;
 		}
+
+		console.log('Rendering page ' + (i + 1) + ' of ' + pages.length);
 
 		var page = pages[i];
 		for (var ii = 0, il = page.items.length; ii < il; ii++) {
 			var item = page.items[ii];
+			console.log('  Rendering item ' + (ii + 1) + ' of ' + page.items.length + ' (' + item.type + ')', item);
 			switch (item.type) {
 				case 'vector':
 					if (tagger) { tagger.beginArtifact(); }
@@ -60192,43 +60272,60 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 			state.currentTableBodyOpen = false;
 		}
 
-		// Manage THead / TBody transitions
-		if (tableCtx.isHeader) {
-			if (!state.currentTableHeaderOpen) {
-				if (state.currentTableBodyOpen) {
-					tagger.endTableBody();
-					state.currentTableBodyOpen = false;
+		if (tableCtx.isTOC) {
+			// TOC: flat structure - TOCI directly under TOC, no THead/TBody/TD
+			if (!prevTableCtx || prevTableCtx.rowIndex !== tableCtx.rowIndex) {
+				if (state._prevRowIndex !== undefined && state._prevRowIndex >= 0) {
+					tagger.endRow();
 				}
-				tagger.beginTableHeader();
-				state.currentTableHeaderOpen = true;
-				state._prevRowIndex = -1;
+				tagger.beginRow(); // creates TOCI
+				state._prevRowIndex = tableCtx.rowIndex;
 			}
+			// No cells for TOC - content goes directly in TOCI
 		} else {
-			if (state.currentTableHeaderOpen) {
-				tagger.endTableHeader();
-				state.currentTableHeaderOpen = false;
+			// Regular table: THead/TBody/TR/TH/TD structure
+			// Manage THead / TBody transitions
+			if (tableCtx.isHeader) {
+				if (!state.currentTableHeaderOpen) {
+					if (state.currentTableBodyOpen) {
+						tagger.endTableBody();
+						state.currentTableBodyOpen = false;
+					}
+					tagger.beginTableHeader();
+					state.currentTableHeaderOpen = true;
+					state._prevRowIndex = -1;
+				}
+			} else {
+				if (state.currentTableHeaderOpen) {
+					tagger.endTableHeader();
+					state.currentTableHeaderOpen = false;
+				}
+				if (!state.currentTableBodyOpen) {
+					tagger.beginTableBody();
+					state.currentTableBodyOpen = true;
+					state._prevRowIndex = -1;
+				}
 			}
-			if (!state.currentTableBodyOpen) {
-				tagger.beginTableBody();
-				state.currentTableBodyOpen = true;
-				state._prevRowIndex = -1;
-			}
-		}
 
-		// New row?
-		if (!prevTableCtx || prevTableCtx.rowIndex !== tableCtx.rowIndex) {
-			if (state._prevRowIndex !== undefined && state._prevRowIndex >= 0) {
-				tagger.endRow();
+			// New row?
+			if (!prevTableCtx || prevTableCtx.rowIndex !== tableCtx.rowIndex) {
+				if (state._prevRowIndex !== undefined && state._prevRowIndex >= 0) {
+					tagger.endRow();
+				}
+				tagger.beginRow();
+				state._prevRowIndex = tableCtx.rowIndex;
+				state._prevColIndex = -1;
+				// Reset list state — lists from previous row's cells are now closed
+				state.prevListContext = null;
 			}
-			tagger.beginRow();
-			state._prevRowIndex = tableCtx.rowIndex;
-			state._prevCellCreated = false;
-		}
 
-		// Each line in a cell - if it's the first line, open a cell
-		if (ctx.isFirstLine) {
-			tagger.beginCell(tableCtx.isHeader);
-			state._prevCellCreated = true;
+			// New cell? Detect by column index change
+			if (tableCtx.colIndex !== state._prevColIndex) {
+				tagger.beginCell(tableCtx.isHeader);
+				state._prevColIndex = tableCtx.colIndex;
+				// Reset list state — lists from previous cell are now closed
+				state.prevListContext = null;
+			}
 		}
 	} else if (prevTableCtx && prevTableCtx.tagged) {
 		// Leaving a table context
@@ -60248,6 +60345,9 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	}
 
 	// --- List structure management ---
+	// Re-read prevListCtx in case it was reset by a cell/row transition above
+	prevListCtx = state.prevListContext;
+
 	if (listCtx) {
 		if (!prevListCtx) {
 			// Entering a list
@@ -62863,7 +62963,7 @@ module.exports = TraversalTracker;
 
 /***/ }),
 
-/***/ 29314:
+/***/ 80735:
 /***/ (function(module, exports, __webpack_require__) {
 
 var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;(function(a,b){if(true)!(__WEBPACK_AMD_DEFINE_ARRAY__ = [], __WEBPACK_AMD_DEFINE_FACTORY__ = (b),

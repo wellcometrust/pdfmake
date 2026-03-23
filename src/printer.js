@@ -427,6 +427,14 @@ function renderPages(pages, fontProvider, pdfKitDoc, patterns, progressCallback,
 
 		if (tagger) {
 			tagger.beginPage();
+			// Reset tagger state so that structures (tables, lists) that span
+			// across pages are reopened fresh under the new Sect.
+			taggerState.prevTableContext = null;
+			taggerState.prevListContext = null;
+			taggerState.currentTableHeaderOpen = false;
+			taggerState.currentTableBodyOpen = false;
+			taggerState._prevRowIndex = -1;
+			taggerState._prevColIndex = -1;
 		}
 
 		var page = pages[i];
@@ -643,43 +651,60 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 			state.currentTableBodyOpen = false;
 		}
 
-		// Manage THead / TBody transitions
-		if (tableCtx.isHeader) {
-			if (!state.currentTableHeaderOpen) {
-				if (state.currentTableBodyOpen) {
-					tagger.endTableBody();
-					state.currentTableBodyOpen = false;
+		if (tableCtx.isTOC) {
+			// TOC: flat structure - TOCI directly under TOC, no THead/TBody/TD
+			if (!prevTableCtx || prevTableCtx.rowIndex !== tableCtx.rowIndex) {
+				if (state._prevRowIndex !== undefined && state._prevRowIndex >= 0) {
+					tagger.endRow();
 				}
-				tagger.beginTableHeader();
-				state.currentTableHeaderOpen = true;
-				state._prevRowIndex = -1;
+				tagger.beginRow(); // creates TOCI
+				state._prevRowIndex = tableCtx.rowIndex;
 			}
+			// No cells for TOC - content goes directly in TOCI
 		} else {
-			if (state.currentTableHeaderOpen) {
-				tagger.endTableHeader();
-				state.currentTableHeaderOpen = false;
+			// Regular table: THead/TBody/TR/TH/TD structure
+			// Manage THead / TBody transitions
+			if (tableCtx.isHeader) {
+				if (!state.currentTableHeaderOpen) {
+					if (state.currentTableBodyOpen) {
+						tagger.endTableBody();
+						state.currentTableBodyOpen = false;
+					}
+					tagger.beginTableHeader();
+					state.currentTableHeaderOpen = true;
+					state._prevRowIndex = -1;
+				}
+			} else {
+				if (state.currentTableHeaderOpen) {
+					tagger.endTableHeader();
+					state.currentTableHeaderOpen = false;
+				}
+				if (!state.currentTableBodyOpen) {
+					tagger.beginTableBody();
+					state.currentTableBodyOpen = true;
+					state._prevRowIndex = -1;
+				}
 			}
-			if (!state.currentTableBodyOpen) {
-				tagger.beginTableBody();
-				state.currentTableBodyOpen = true;
-				state._prevRowIndex = -1;
-			}
-		}
 
-		// New row?
-		if (!prevTableCtx || prevTableCtx.rowIndex !== tableCtx.rowIndex) {
-			if (state._prevRowIndex !== undefined && state._prevRowIndex >= 0) {
-				tagger.endRow();
+			// New row?
+			if (!prevTableCtx || prevTableCtx.rowIndex !== tableCtx.rowIndex) {
+				if (state._prevRowIndex !== undefined && state._prevRowIndex >= 0) {
+					tagger.endRow();
+				}
+				tagger.beginRow();
+				state._prevRowIndex = tableCtx.rowIndex;
+				state._prevColIndex = -1;
+				// Reset list state — lists from previous row's cells are now closed
+				state.prevListContext = null;
 			}
-			tagger.beginRow();
-			state._prevRowIndex = tableCtx.rowIndex;
-			state._prevCellCreated = false;
-		}
 
-		// Each line in a cell - if it's the first line, open a cell
-		if (ctx.isFirstLine) {
-			tagger.beginCell(tableCtx.isHeader);
-			state._prevCellCreated = true;
+			// New cell? Detect by column index change
+			if (tableCtx.colIndex !== state._prevColIndex) {
+				tagger.beginCell(tableCtx.isHeader);
+				state._prevColIndex = tableCtx.colIndex;
+				// Reset list state — lists from previous cell are now closed
+				state.prevListContext = null;
+			}
 		}
 	} else if (prevTableCtx && prevTableCtx.tagged) {
 		// Leaving a table context
@@ -699,6 +724,9 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	}
 
 	// --- List structure management ---
+	// Re-read prevListCtx in case it was reset by a cell/row transition above
+	prevListCtx = state.prevListContext;
+
 	if (listCtx) {
 		if (!prevListCtx) {
 			// Entering a list
