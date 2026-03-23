@@ -20,11 +20,32 @@ var isFunction = require('./helpers').isFunction;
 var TextTools = require('./textTools');
 var StyleContextStack = require('./styleContextStack');
 var isNumber = require('./helpers').isNumber;
+var accessibilityMetadata = require('./accessibilityMetadata');
 
 function addAll(target, otherArray) {
 	otherArray.forEach(function (item) {
 		target.push(item);
 	});
+}
+
+/**
+ * Checks whether a list item (or any node) contains a nested list (ul or ol),
+ * including when wrapped in a stack or columns.
+ */
+function _itemContainsList(node) {
+	if (!node) { return false; }
+	if (node.ul || node.ol) { return true; }
+	if (node.stack) {
+		for (var i = 0; i < node.stack.length; i++) {
+			if (_itemContainsList(node.stack[i])) { return true; }
+		}
+	}
+	if (node.columns) {
+		for (var j = 0; j < node.columns.length; j++) {
+			if (_itemContainsList(node.columns[j])) { return true; }
+		}
+	}
+	return false;
 }
 
 /**
@@ -42,6 +63,10 @@ function LayoutBuilder(pageSize, pageMargins, imageMeasure, svgMeasure) {
 	this.svgMeasure = svgMeasure;
 	this.tableLayouts = {};
 	this.nestedLevel = 0;
+
+	// Accessibility context tracking
+	this._accessibilityListStack = [];
+	this._accessibilityTableContext = null;
 }
 
 LayoutBuilder.prototype.registerTableLayouts = function (tableLayouts) {
@@ -760,6 +785,11 @@ LayoutBuilder.prototype.processRow = function ({ marginX = [0, 0], dontBreakRows
 	for (var i = 0, l = cells.length; i < l; i++) {
 		var cell = cells[i];
 
+		// Update accessibility table context with current column index
+		if (self._accessibilityTableContext && self._accessibilityTableContext.tagged) {
+			self._accessibilityTableContext.colIndex = i;
+		}
+
 		// Page change handler
 
 		this.tracker.auto('pageChanged', storePageBreakClosure, function () {
@@ -881,18 +911,34 @@ LayoutBuilder.prototype.processList = function (orderedList, node) {
 		items = orderedList ? node.ol : node.ul,
 		gapSize = node._gapSize;
 
+	// Push list accessibility context
+	this._accessibilityListStack.push({
+		node: node,
+		itemIndex: -1,
+		isFirstNodeInItem: false,
+		isLastNodeInItem: false
+	});
+
 	this.writer.context().addMargin(gapSize.width);
 
 	var nextMarker;
 	this.tracker.auto('lineAdded', addMarkerToFirstLeaf, function () {
-		items.forEach(function (item) {
+		items.forEach(function (item, idx) {
+			var listCtx = self._accessibilityListStack[self._accessibilityListStack.length - 1];
+			listCtx.itemIndex = idx;
+			listCtx.isFirstNodeInItem = true;
+			listCtx.isLastNodeInItem = !_itemContainsList(item);
 			nextMarker = item.listMarker;
 			self.processNode(item);
+			listCtx.isFirstNodeInItem = false;
 			addAll(node.positions, item.positions);
 		});
 	});
 
 	this.writer.context().addMargin(-gapSize.width);
+
+	// Pop list accessibility context
+	this._accessibilityListStack.pop();
 
 	function addMarkerToFirstLeaf(line) {
 		// I'm not very happy with the way list processing is implemented
@@ -922,6 +968,13 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 	this.nestedLevel++;
 	var processor = new TableProcessor(tableNode);
 
+	var isTaggedTable = accessibilityMetadata.shouldTagTable(tableNode);
+	var isTOCTable = accessibilityMetadata.isTOC(tableNode);
+	var headerRowCount = tableNode.table.headerRows || 0;
+
+	// Store the accessibility table context so child nodes (processLeaf) can see it
+	var previousTableContext = this._accessibilityTableContext;
+
 	processor.beginTable(this.writer);
 
 	var rowHeights = tableNode.table.heights;
@@ -937,6 +990,22 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 		}
 
 		processor.beginRow(i, this.writer);
+
+		// Set table accessibility context for this row's cells
+		if (isTaggedTable) {
+			var isHeaderRow = i < headerRowCount;
+			this._accessibilityTableContext = {
+				tagged: true,
+				isTOC: isTOCTable,
+				rowIndex: i,
+				isHeader: isHeaderRow,
+				headerRowCount: headerRowCount,
+				totalRows: l,
+				isFirstRow: i === 0,
+				isLastRow: i === l - 1,
+				colIndex: -1 // will be updated per cell during processRow
+			};
+		}
 
 		var height;
 		if (isFunction(rowHeights)) {
@@ -980,6 +1049,10 @@ LayoutBuilder.prototype.processTable = function (tableNode) {
 	}
 
 	processor.endTable(this.writer);
+
+	// Restore previous table context (for nested tables)
+	this._accessibilityTableContext = previousTableContext;
+
 	this.nestedLevel--;
 	if (this.nestedLevel === 0) {
 		this.writer.context().resetMarginXTopParent();
@@ -1022,7 +1095,38 @@ LayoutBuilder.prototype.processLeaf = function (node) {
 		}
 	}
 
+	// Build accessibility context for text lines
+	var accessibilityRole = accessibilityMetadata.getAccessibilityRole(node);
+	var isFirstLine = true;
+
 	while (line && (maxHeight === -1 || currentHeight < maxHeight)) {
+		// Annotate line with accessibility context
+		// Snapshot tableContext (clone) since the shared object is mutated per-column
+		var tableCtxSnapshot = this._accessibilityTableContext ? {
+			tagged: this._accessibilityTableContext.tagged,
+			isTOC: this._accessibilityTableContext.isTOC,
+			rowIndex: this._accessibilityTableContext.rowIndex,
+			isHeader: this._accessibilityTableContext.isHeader,
+			headerRowCount: this._accessibilityTableContext.headerRowCount,
+			totalRows: this._accessibilityTableContext.totalRows,
+			isFirstRow: this._accessibilityTableContext.isFirstRow,
+			isLastRow: this._accessibilityTableContext.isLastRow,
+			colIndex: this._accessibilityTableContext.colIndex
+		} : null;
+		line._accessibilityContext = {
+			role: accessibilityRole,
+			isFirstLine: isFirstLine,
+			isLastLine: line.lastLineInParagraph,
+			listContext: this._accessibilityListStack.length > 0 ? {
+				depth: this._accessibilityListStack.length,
+				itemIndex: this._accessibilityListStack[this._accessibilityListStack.length - 1].itemIndex,
+				isFirstInItem: isFirstLine && this._accessibilityListStack[this._accessibilityListStack.length - 1].isFirstNodeInItem,
+				isLastInItem: line.lastLineInParagraph && this._accessibilityListStack[this._accessibilityListStack.length - 1].isLastNodeInItem
+			} : null,
+			tableContext: tableCtxSnapshot
+		};
+		isFirstLine = false;
+
 		var positions = this.writer.addLine(line);
 		node.positions.push(positions);
 		line = this.buildNextLine(node);
@@ -1116,11 +1220,21 @@ LayoutBuilder.prototype.buildNextLine = function (textNode) {
 
 // images
 LayoutBuilder.prototype.processImage = function (node) {
+	node._accessibilityContext = {
+		role: (node.alt || node.actualText) ? 'Figure' : 'Artifact',
+		alt: node.alt,
+		actualText: node.actualText
+	};
 	var position = this.writer.addImage(node);
 	node.positions.push(position);
 };
 
 LayoutBuilder.prototype.processSVG = function (node) {
+	node._accessibilityContext = {
+		role: (node.alt || node.actualText) ? 'Figure' : 'Artifact',
+		alt: node.alt,
+		actualText: node.actualText
+	};
 	var position = this.writer.addSVG(node);
 	node.positions.push(position);
 };
@@ -1138,6 +1252,7 @@ LayoutBuilder.prototype.processCanvas = function (node) {
 	this.writer.alignCanvas(node);
 
 	node.canvas.forEach(function (vector) {
+		vector._accessibilityContext = { role: 'Artifact' };
 		var position = this.writer.addVector(vector);
 		node.positions.push(position);
 	}, this);
