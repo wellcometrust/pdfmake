@@ -214,6 +214,15 @@ describe('PageElementWriter', function () {
 			assert.equal(uCtx.pages.length, 1);
 			assert.equal(uCtx.pages[0].items.length, 2);
 		});
+
+		it('should create a transaction context using the current page when size is omitted', function () {
+			pew.beginUnbreakableBlock();
+			var uCtx = pew.context();
+
+			assert.notEqual(uCtx, ctx);
+			assert.equal(uCtx.pages[0].pageSize.width, AVAILABLE_WIDTH);
+			assert.equal(uCtx.availableHeight, AVAILABLE_HEIGHT);
+		});
 	});
 
 	describe('commitUnbreakableBlock', function () {
