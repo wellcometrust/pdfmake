@@ -1,9 +1,20 @@
 import ColumnCalculator from './columnCalculator';
 import { isNumber, isPositiveInteger } from './helpers/variableType';
 
+const PAGE_BREAK_VALUES = new Set(['before', 'beforeOdd', 'beforeEven', 'after', 'afterOdd', 'afterEven']);
+
+const hasExplicitPageBreak = cell => {
+	if (!cell || typeof cell !== 'object') {
+		return false;
+	}
+
+	return PAGE_BREAK_VALUES.has(cell.pageBreak);
+};
+
 class TableProcessor {
 	constructor(tableNode) {
 		this.tableNode = tableNode;
+		this._isCurrentRowUnbreakable = false;
 	}
 
 	beginTable(writer) {
@@ -163,7 +174,11 @@ class TableProcessor {
 
 		this.rowTopPageY = writer.context().y + this.rowPaddingTop;
 
-		if (this.dontBreakRows && rowIndex > 0) {
+		const rowCells = this.tableNode.table.body[rowIndex] || [];
+		const rowHasPageBreak = rowCells.some(hasExplicitPageBreak);
+		this._isCurrentRowUnbreakable = this.dontBreakRows && rowIndex > 0 && !rowHasPageBreak;
+
+		if (this._isCurrentRowUnbreakable) {
 			writer.beginUnbreakableBlock();
 		}
 		this.rowTopY = writer.context().y;
@@ -589,7 +604,9 @@ class TableProcessor {
 			this.headerRepeatable = writer.currentBlockToRepeatable();
 		}
 
-		if (this.dontBreakRows) {
+		const shouldCommitCurrentRowUnbreakable = this.dontBreakRows && (rowIndex === 0 || this._isCurrentRowUnbreakable);
+
+		if (shouldCommitCurrentRowUnbreakable) {
 			const pageChangedCallback = () => {
 				if (rowIndex > 0 && !this.headerRows && this.layout.hLineWhenBroken !== false) {
 					// Draw the top border of the row after a page break
@@ -603,6 +620,8 @@ class TableProcessor {
 
 			writer.removeListener('pageChanged', pageChangedCallback);
 		}
+
+		this._isCurrentRowUnbreakable = false;
 
 		if (this.headerRepeatable && (rowIndex === (this.rowsWithoutPageBreak - 1) || rowIndex === this.tableNode.table.body.length - 1)) {
 			writer.commitUnbreakableBlock();

@@ -1,6 +1,3 @@
-/*eslint no-unused-vars: ["error", {"args": "none"}]*/
-
-
 var pdfmake = require('../js/index'); // only during development, otherwise use the following line
 //var pdfmake = require('pdfmake');
 
@@ -10,6 +7,12 @@ pdfmake.addFonts(Roboto);
 pdfmake.setUrlAccessPolicy((url) => {
 	// this can be used to restrict allowed domains
 	return url.startsWith('https://');
+});
+
+// eslint-disable-next-line no-unused-vars
+pdfmake.setLocalAccessPolicy((path) => {
+	// this can be used to restrict access to local file system
+	return true;
 });
 
 
@@ -292,6 +295,7 @@ var docDefinition = {
 				]
 			},
 			layout: {
+				// eslint-disable-next-line no-unused-vars
 				fillColor: function (rowIndex, node, columnIndex) {
 					return (rowIndex % 2 === 0) ? '#CCCCCC' : null;
 				}
@@ -381,9 +385,11 @@ var docDefinition = {
 				vLineWidth: function (i, node) {
 					return (i === 0 || i === node.table.widths.length) ? 2 : 1;
 				},
+				// eslint-disable-next-line no-unused-vars
 				hLineColor: function (i, node) {
 					return 'black';
 				},
+				// eslint-disable-next-line no-unused-vars
 				vLineColor: function (i, node) {
 					return 'black';
 				},

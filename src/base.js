@@ -9,6 +9,7 @@ class pdfmake {
 	constructor() {
 		this.virtualfs = virtualfs;
 		this.urlAccessPolicy = undefined;
+		this.localAccessPolicy = undefined;
 	}
 
 	/**
@@ -34,11 +35,16 @@ class pdfmake {
 				'No URL access policy defined. Consider using setUrlAccessPolicy() to restrict external resource downloads.'
 			);
 		}
+		if (typeof this.localAccessPolicy === 'undefined' && isServer) {
+			console.warn(
+				'No local access policy defined. Consider using setLocalAccessPolicy() to restrict local file system access.'
+			);
+		}
 
 		let urlResolver = new URLResolver(this.virtualfs);
 		urlResolver.setUrlAccessPolicy(this.urlAccessPolicy);
 
-		let printer = new Printer(this.fonts, this.virtualfs, urlResolver);
+		let printer = new Printer(this.fonts, this.virtualfs, urlResolver, this.localAccessPolicy);
 		const pdfDocumentPromise = printer.createPdfKitDocument(docDefinition, options);
 
 		return this._transformToDocument(pdfDocumentPromise);

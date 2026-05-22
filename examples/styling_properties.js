@@ -9,6 +9,12 @@ pdfmake.setUrlAccessPolicy((url) => {
 	return url.startsWith('https://');
 });
 
+// eslint-disable-next-line no-unused-vars
+pdfmake.setLocalAccessPolicy((path) => {
+	// this can be used to restrict access to local file system
+	return true;
+});
+
 
 var docDefinition = {
 	content: [

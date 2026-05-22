@@ -1,4 +1,5 @@
 import PDFKit from 'pdfkit';
+import { isString } from './helpers/variableType';
 
 const typeName = (bold, italics) => {
 	let type = 'normal';
@@ -13,7 +14,7 @@ const typeName = (bold, italics) => {
 };
 
 class PDFDocument extends PDFKit {
-	constructor(fonts = {}, images = {}, patterns = {}, attachments = {}, options = {}, virtualfs = null) {
+	constructor(fonts = {}, images = {}, patterns = {}, attachments = {}, options = {}, virtualfs = null, localAccessPolicy = undefined) {
 		super(options);
 
 		this.fonts = {};
@@ -39,10 +40,10 @@ class PDFDocument extends PDFKit {
 			}
 		}
 
-
 		this.images = images;
 		this.attachments = attachments;
 		this.virtualfs = virtualfs;
+		this.localAccessPolicy = localAccessPolicy;
 	}
 
 	getFontType(bold, italics) {
@@ -74,6 +75,8 @@ class PDFDocument extends PDFKit {
 
 			if (this.virtualfs && this.virtualfs.existsSync(def[0])) {
 				def[0] = this.virtualfs.readFileSync(def[0]);
+			} else {
+				this.validateLocalFile(def[0]);
 			}
 
 			this.fontCache[familyName][type] = this.font(...def)._font;
@@ -108,8 +111,12 @@ class PDFDocument extends PDFKit {
 
 		let image;
 
+		let imageSrc = realImageSrc(src);
+
+		this.validateLocalFile(imageSrc);
+
 		try {
-			image = this.openImage(realImageSrc(src));
+			image = this.openImage(imageSrc);
 			if (!image) {
 				throw new Error('No image');
 			}
@@ -157,7 +164,21 @@ class PDFDocument extends PDFKit {
 			return this.virtualfs.readFileSync(attachment.src);
 		}
 
+		this.validateLocalFile(attachment.src);
+
 		return attachment;
+	}
+
+	resolveColor(color, defaultColor) {
+		color = color || defaultColor;
+
+		if (typeof this._normalizeColor === 'function') {
+			if (isString(color) && this._normalizeColor(color) === null) { // color is not valid
+				return defaultColor;
+			}
+		}
+
+		return color;
 	}
 
 	setOpenActionAsPrint() {
@@ -168,6 +189,30 @@ class PDFDocument extends PDFKit {
 		});
 		this._root.data.OpenAction = printActionRef;
 		printActionRef.end();
+	}
+
+	file(src, options = {}) {
+		this.validateLocalFile(src);
+
+		return super.file(src, options);
+	}
+
+	validateLocalFile(path) {
+		if (typeof this.localAccessPolicy === 'undefined') {
+			return;
+		}
+
+		if (!isString(path)) {
+			return;
+		}
+
+		if (/^data:/.test(path)) {
+			return;
+		}
+
+		if (this.localAccessPolicy(path) !== true) {
+			throw new Error(`Access to local file denied by resource access policy: ${path}`);
+		}
 	}
 }
 

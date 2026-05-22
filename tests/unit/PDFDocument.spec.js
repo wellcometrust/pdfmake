@@ -57,4 +57,29 @@ describe('PDFDocument', function () {
 		// TODO
 
 	});
+
+	describe('resolveColor', function () {
+
+		it('should resolve valid color name', function () {
+			assert.equal(pdfDocument.resolveColor('red'), 'red');
+		});
+
+		it('should resolve default color', function () {
+			assert.equal(pdfDocument.resolveColor(undefined, 'red'), 'red');
+		});
+
+		it('should resolve hex color', function () {
+			 assert.equal(pdfDocument.resolveColor('#f900f8'), '#f900f8');
+		});
+
+		it('should resolve invalid color name', function () {
+			assert.equal(pdfDocument.resolveColor('invalid'), null);
+		});
+
+		it('should resolve invalid color name with default', function () {
+			assert.equal(pdfDocument.resolveColor('invalid', 'red'), 'red');
+		});
+
+	});
+
 });

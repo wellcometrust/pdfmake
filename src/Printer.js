@@ -13,11 +13,13 @@ class PdfPrinter {
 	 * @param {object} fontDescriptors font definition dictionary
 	 * @param {object} virtualfs
 	 * @param {object} urlResolver
+	 * @param {(path: string) => boolean} localAccessPolicy
 	 */
-	constructor(fontDescriptors, virtualfs, urlResolver) {
+	constructor(fontDescriptors, virtualfs, urlResolver, localAccessPolicy) {
 		this.fontDescriptors = fontDescriptors;
 		this.virtualfs = virtualfs;
 		this.urlResolver = urlResolver;
+		this.localAccessPolicy = localAccessPolicy;
 	}
 
 	/**
@@ -69,7 +71,7 @@ class PdfPrinter {
 			font: null
 		};
 
-		this.pdfKitDoc = new PDFDocument(this.fontDescriptors, docDefinition.images, docDefinition.patterns, docDefinition.attachments, pdfOptions, this.virtualfs);
+		this.pdfKitDoc = new PDFDocument(this.fontDescriptors, docDefinition.images, docDefinition.patterns, docDefinition.attachments, pdfOptions, this.virtualfs, this.localAccessPolicy);
 		embedFiles(docDefinition, this.pdfKitDoc);
 
 		const builder = new LayoutBuilder(pageSize, normalizePageMargin(docDefinition.pageMargins), new SVGMeasure());

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.8 - 2026-05-06
+
+- Added server-side method `setLocalAccessPolicy()` for defining a custom access policy for local file
+
+	Example:
+	```js
+	pdfmake.setLocalAccessPolicy((path) => {
+		// check allowed local file path
+		return path.startsWith("fonts/");
+	});
+	```
+- Improved URL Access Policy (`setUrlAccessPolicy` method); URLs are now validated even before each redirection in Node.js and after final redirection in browser (browsers do not support validation before redirection)
+- Fixed extra blank page when using headerRows, dontBreakRows and cell pageBreak together
+- Fixed rendering of an invalid color name - previously it used the last valid color; now it defaults to black
+- Fixed dontBreakRows rowSpan ending offset across pages
+
 ## 0.3.7 - 2026-03-17
 
 - Updated pdfkit to 0.18.0
