@@ -44,7 +44,7 @@ class Renderer {
 		this.outlineMap = [];
 	}
 
-	renderPages(pages) {
+	renderPages(pages, tagger = null) {
 		this.pdfDocument._pdfMakePages = pages; // TODO: Why?
 
 		let totalItems = 0;
@@ -56,24 +56,51 @@ class Renderer {
 
 		let renderedItems = 0;
 
+		// Tracks cross-line state for accessibility structure transitions
+		const taggerState = tagger ? {
+			prevTableContext: null,
+			prevListContext: null,
+			currentTableHeaderOpen: false,
+			currentTableBodyOpen: false,
+			_prevRowIndex: -1,
+			_prevColIndex: -1
+		} : null;
+
 		for (let i = 0; i < pages.length; i++) {
+			if (i > 0 && tagger) {
+				tagger.endPage();
+			}
+
 			this.pdfDocument.addPage({ size: [pages[i].pageSize.width, pages[i].pageSize.height] });
+
+			if (tagger) {
+				tagger.beginPage();
+				// Reset state for the new page
+				taggerState.prevTableContext = null;
+				taggerState.prevListContext = null;
+				taggerState.currentTableHeaderOpen = false;
+				taggerState.currentTableBodyOpen = false;
+				taggerState._prevRowIndex = -1;
+				taggerState._prevColIndex = -1;
+			}
 
 			let page = pages[i];
 			for (let ii = 0, il = page.items.length; ii < il; ii++) {
 				let item = page.items[ii];
 				switch (item.type) {
 					case 'vector':
+						if (tagger) { tagger.beginArtifact(); }
 						this.renderVector(item.item);
+						if (tagger) { tagger.endArtifact(); }
 						break;
 					case 'line':
-						this.renderLine(item.item, item.item.x, item.item.y);
+						this.renderLine(item.item, item.item.x, item.item.y, tagger, taggerState);
 						break;
 					case 'image':
-						this.renderImage(item.item);
+						this.renderImage(item.item, tagger);
 						break;
 					case 'svg':
-						this.renderSVG(item.item);
+						this.renderSVG(item.item, tagger);
 						break;
 					case 'attachment':
 						this.renderAttachment(item.item);
@@ -97,12 +124,18 @@ class Renderer {
 				}
 			}
 			if (page.watermark) {
+				if (tagger) { tagger.beginArtifact(); }
 				this.renderWatermark(page);
+				if (tagger) { tagger.endArtifact(); }
 			}
+		}
+
+		if (tagger) {
+			tagger.endPage();
 		}
 	}
 
-	renderLine(line, x, y) {
+	renderLine(line, x, y, tagger = null, taggerState = null) {
 		function preparePageNodeRefLine(_pageNodeRef, inline) {
 			let newWidth;
 			let diffWidth;
@@ -156,6 +189,17 @@ class Renderer {
 
 		textDecorator.drawBackground(line, x, y);
 
+		// Accessibility: manage logical structure elements based on this line's context
+		if (tagger && line._accessibilityContext) {
+			_manageAccessibilityStructures(tagger, taggerState, line._accessibilityContext);
+		}
+
+		// Accessibility: open a content mark within the current structure element
+		let endContentMark = null;
+		if (tagger && line._accessibilityContext && line._accessibilityContext.role !== 'Artifact' && line._accessibilityContext.role !== null) {
+			endContentMark = tagger.markContent();
+		}
+
 		//TODO: line.optimizeInlines();
 		//TODO: lines without differently styled inlines should be written to pdf as one stream
 		for (let i = 0, l = line.inlines.length; i < l; i++) {
@@ -186,6 +230,14 @@ class Renderer {
 				options.features = inline.fontFeatures;
 			}
 
+			// Accessibility: handle inline links — wrap link text in a Link struct
+			const hasLink = inline.link || inline.linkToDestination || inline.linkToPage;
+			if (tagger && hasLink && endContentMark) {
+				endContentMark();
+				tagger.beginLink();
+				endContentMark = tagger.markContent();
+			}
+
 			let opacity = isNumber(inline.opacity) ? inline.opacity : 1;
 			this.pdfDocument.opacity(opacity);
 			this.pdfDocument.fill(this.pdfDocument.resolveColor(inline.color, 'black'));
@@ -200,6 +252,25 @@ class Renderer {
 				this.pdfDocument.ref({ Type: 'Action', S: 'GoTo', D: [inline.linkToPage, 0, 0] }).end();
 				this.pdfDocument.annotate(x + inline.x, shiftedY, inline.width, inline.height, { Subtype: 'Link', Dest: [inline.linkToPage - 1, 'XYZ', null, null, null] });
 			}
+
+			// Accessibility: close link marking after link inline
+			if (tagger && hasLink) {
+				if (endContentMark) { endContentMark(); endContentMark = null; }
+				tagger.endLink();
+				if (i < l - 1) {
+					endContentMark = tagger.markContent();
+				}
+			}
+		}
+
+		// Accessibility: end the content mark for this line
+		if (endContentMark) {
+			endContentMark();
+		}
+
+		// Accessibility: notify tagger that line rendering is complete
+		if (tagger && line._accessibilityContext) {
+			tagger.processLineEnd(line._accessibilityContext);
 		}
 
 		// Decorations won't draw correctly for superscript
@@ -299,7 +370,16 @@ class Renderer {
 		}
 	}
 
-	renderImage(image) {
+	renderImage(image, tagger = null) {
+		const isFigure = tagger && image._accessibilityContext && image._accessibilityContext.role === 'Figure';
+		if (tagger) {
+			if (isFigure) {
+				tagger.beginFigure({ alt: image._accessibilityContext.alt, actualText: image._accessibilityContext.actualText });
+			} else {
+				tagger.beginArtifact();
+			}
+		}
+
 		let opacity = isNumber(image.opacity) ? image.opacity : 1;
 		this.pdfDocument.opacity(opacity);
 		if (image.cover) {
@@ -345,9 +425,26 @@ class Renderer {
 				}
 			);
 		}
+
+		if (tagger) {
+			if (isFigure) {
+				tagger.endFigure();
+			} else {
+				tagger.endArtifact();
+			}
+		}
 	}
 
-	renderSVG(svg) {
+	renderSVG(svg, tagger = null) {
+		const isFigure = tagger && svg._accessibilityContext && svg._accessibilityContext.role === 'Figure';
+		if (tagger) {
+			if (isFigure) {
+				tagger.beginFigure({ alt: svg._accessibilityContext.alt, actualText: svg._accessibilityContext.actualText });
+			} else {
+				tagger.beginArtifact();
+			}
+		}
+
 		let options = {
 			width: svg._width,
 			height: svg._height,
@@ -379,6 +476,14 @@ class Renderer {
 		}
 		if (svg.linkToDestination) {
 			this.pdfDocument.goTo(svg.x, svg.y, svg._width, svg._height, svg.linkToDestination);
+		}
+
+		if (tagger) {
+			if (isFigure) {
+				tagger.endFigure();
+			} else {
+				tagger.endArtifact();
+			}
 		}
 	}
 
@@ -453,6 +558,130 @@ class Renderer {
 		this.pdfDocument.restore();
 	}
 
+}
+
+/**
+ * Drive the AccessibilityTagger's logical structure based on the current line's context.
+ * Called before rendering each line to open/close Table, THead/TBody, TR, TH/TD,
+ * List, LI, LBody, and text element (P/H) structures as state transitions dictate.
+ *
+ * @param {object} tagger - The AccessibilityTagger instance
+ * @param {object} state - Cross-line tagger state (prevTableContext, prevListContext, etc.)
+ * @param {object} ctx - The _accessibilityContext from the current line
+ */
+function _manageAccessibilityStructures(tagger, state, ctx) {
+	if (!ctx) { return; }
+
+	const prevTC = state.prevTableContext;
+	const curTC = ctx.tableContext;
+	const prevLC = state.prevListContext;
+	const curLC = ctx.listContext;
+
+	// ==================== TABLE MANAGEMENT ====================
+
+	const prevInTaggedTable = prevTC && prevTC.tagged;
+	const curInTaggedTable = curTC && curTC.tagged;
+
+	if (curInTaggedTable && !prevInTaggedTable) {
+		// Entering a tagged table (or re-entering after a page break)
+		tagger.beginTable(curTC.isTOC);
+
+		if (!curTC.isTOC) {
+			if (curTC.isHeader) {
+				tagger.beginTableHeader();
+				state.currentTableHeaderOpen = true;
+				state.currentTableBodyOpen = false;
+			} else {
+				tagger.beginTableBody();
+				state.currentTableBodyOpen = true;
+				state.currentTableHeaderOpen = false;
+			}
+		}
+
+		tagger.beginRow();
+		state._prevRowIndex = curTC.rowIndex;
+
+		if (curTC.colIndex >= 0) {
+			tagger.beginCell(curTC.isHeader);
+			state._prevColIndex = curTC.colIndex;
+		}
+
+	} else if (curInTaggedTable && prevInTaggedTable) {
+		// Still inside a tagged table — check for transitions
+
+		// THead → TBody section transition
+		if (!curTC.isTOC && prevTC.isHeader && !curTC.isHeader) {
+			if (state.currentTableHeaderOpen) {
+				tagger.endTableHeader();
+				state.currentTableHeaderOpen = false;
+			}
+			if (!state.currentTableBodyOpen) {
+				tagger.beginTableBody();
+				state.currentTableBodyOpen = true;
+			}
+		}
+
+		// Row change
+		if (curTC.rowIndex !== state._prevRowIndex) {
+			tagger.endRow();
+			tagger.beginRow();
+			state._prevRowIndex = curTC.rowIndex;
+			state._prevColIndex = -1;
+		}
+
+		// Column/cell change within the same row
+		if (curTC.colIndex >= 0 && curTC.colIndex !== state._prevColIndex) {
+			tagger.beginCell(curTC.isHeader);
+			state._prevColIndex = curTC.colIndex;
+		}
+
+	} else if (!curInTaggedTable && prevInTaggedTable) {
+		// Leaving a tagged table
+		tagger.endRow();
+
+		if (state.currentTableHeaderOpen) {
+			tagger.endTableHeader();
+			state.currentTableHeaderOpen = false;
+		}
+		if (state.currentTableBodyOpen) {
+			tagger.endTableBody();
+			state.currentTableBodyOpen = false;
+		}
+
+		tagger.endTable();
+		state._prevRowIndex = -1;
+		state._prevColIndex = -1;
+	}
+
+	state.prevTableContext = curTC || null;
+
+	// ==================== LIST MANAGEMENT ====================
+
+	if (curLC && !prevLC) {
+		// Entering a list for the first time
+		tagger.beginList();
+		tagger.beginListItem();
+	} else if (curLC && prevLC) {
+		if (curLC.depth > prevLC.depth) {
+			// Nested list starting
+			tagger.beginList();
+			tagger.beginListItem();
+		} else if (curLC.itemIndex !== prevLC.itemIndex) {
+			// New item at same depth (previous item was closed by processLineEnd)
+			tagger.beginListItem();
+		}
+		// depth decrease is handled by processLineEnd + the next beginList/beginListItem
+	}
+	// Leaving a list (prevLC && !curLC) is handled by tagger._closeAllOpenStructures on page change
+	// and by finalise() at document end
+
+	state.prevListContext = curLC || null;
+
+	// ==================== TEXT ELEMENT MANAGEMENT ====================
+
+	if (ctx.role && ctx.role !== 'Artifact') {
+		tagger.beginTextElement(ctx.role);
+	}
 }
 
 export default Renderer;

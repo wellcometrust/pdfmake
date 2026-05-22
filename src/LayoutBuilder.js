@@ -10,11 +10,28 @@ import { stringifyNode, getNodeId } from './helpers/node';
 import { pack, offsetVector, convertToDynamicContent } from './helpers/tools';
 import TextInlines from './TextInlines';
 import StyleContextStack from './StyleContextStack';
+import { getAccessibilityRole, shouldTagTable, isTOC } from './accessibilityMetadata';
 
 function addAll(target, otherArray) {
 	otherArray.forEach(item => {
 		target.push(item);
 	});
+}
+
+function _itemContainsList(node) {
+	if (!node) { return false; }
+	if (node.ul || node.ol) { return true; }
+	if (node.stack) {
+		for (let i = 0; i < node.stack.length; i++) {
+			if (_itemContainsList(node.stack[i])) { return true; }
+		}
+	}
+	if (node.columns) {
+		for (let j = 0; j < node.columns.length; j++) {
+			if (_itemContainsList(node.columns[j])) { return true; }
+		}
+	}
+	return false;
 }
 
 /**
@@ -34,6 +51,8 @@ class LayoutBuilder {
 		this.tableLayouts = {};
 		this.nestedLevel = 0;
 		this.verticalAlignmentItemStack = [];
+		this._accessibilityListStack = [];
+		this._accessibilityTableContext = null;
 	}
 
 	registerTableLayouts(tableLayouts) {
@@ -912,6 +931,11 @@ class LayoutBuilder {
 			let cell = cells[i];
 			let cellIndexBegin = i;
 
+			// Update accessibility table context with current column index
+			if (this._accessibilityTableContext && this._accessibilityTableContext.tagged) {
+				this._accessibilityTableContext.colIndex = i;
+			}
+
 			// Page change handler
 			const storePageBreakClosure = data => {
 				const startsRowSpan = cell.rowSpan && cell.rowSpan > 1;
@@ -1125,21 +1149,37 @@ class LayoutBuilder {
 		let items = orderedList ? node.ol : node.ul;
 		let gapSize = node._gapSize;
 
+		// Push accessibility list context for this list
+		this._accessibilityListStack.push({
+			node: node,
+			itemIndex: -1,
+			isFirstNodeInItem: false,
+			isLastNodeInItem: false
+		});
+
 		this.writer.context().addMargin(gapSize.width);
 
 		let nextMarker;
 
 		this.writer.addListener('lineAdded', addMarkerToFirstLeaf);
 
-		items.forEach(item => {
+		items.forEach((item, idx) => {
+			let listCtx = this._accessibilityListStack[this._accessibilityListStack.length - 1];
+			listCtx.itemIndex = idx;
+			listCtx.isFirstNodeInItem = true;
+			listCtx.isLastNodeInItem = !_itemContainsList(item);
 			nextMarker = item.listMarker;
 			this.processNode(item);
+			listCtx.isFirstNodeInItem = false;
 			addAll(node.positions, item.positions);
 		});
 
 		this.writer.removeListener('lineAdded', addMarkerToFirstLeaf);
 
 		this.writer.context().addMargin(-gapSize.width);
+
+		// Pop accessibility list context
+		this._accessibilityListStack.pop();
 	}
 
 	// tables
@@ -1148,6 +1188,11 @@ class LayoutBuilder {
 		let processor = new TableProcessor(tableNode);
 
 		processor.beginTable(this.writer);
+
+		const isTaggedTable = shouldTagTable(tableNode);
+		const isTOCTable = isTOC(tableNode);
+		const headerRowCount = tableNode.table.headerRows || 0;
+		const previousTableContext = this._accessibilityTableContext;
 
 		let rowHeights = tableNode.table.heights;
 		let lastRowHeight = 0;
@@ -1188,6 +1233,22 @@ class LayoutBuilder {
 			}
 
 			processor.beginRow(i, this.writer);
+
+			// Set accessibility table context for cells in this row
+			if (isTaggedTable) {
+				const isHeaderRow = i < headerRowCount;
+				this._accessibilityTableContext = {
+					tagged: true,
+					isTOC: isTOCTable,
+					rowIndex: i,
+					isHeader: isHeaderRow,
+					headerRowCount: headerRowCount,
+					totalRows: l,
+					isFirstRow: i === 0,
+					isLastRow: i === l - 1,
+					colIndex: -1
+				};
+			}
 
 			let height;
 			if (typeof rowHeights === 'function') {
@@ -1242,6 +1303,9 @@ class LayoutBuilder {
 		if (this.nestedLevel === 0) {
 			this.writer.context().resetMarginXTopParent();
 		}
+
+		// Restore previous table context (for nested tables)
+		this._accessibilityTableContext = previousTableContext;
 	}
 
 	// leafs (texts)
@@ -1301,6 +1365,9 @@ class LayoutBuilder {
 			}
 		}
 
+		const accessibilityRole = getAccessibilityRole(node);
+		let isFirstLine = true;
+
 		while (line && (maxHeight === -1 || currentHeight < maxHeight)) {
 			// Check if line fits vertically in current context
 			if (line.getHeight() > this.writer.context().availableHeight && this.writer.context().y > this.writer.context().pageMargins.top) {
@@ -1323,6 +1390,22 @@ class LayoutBuilder {
 					this.writer.moveToNextPage(node.pageOrientation);
 				}
 			}
+
+			// Annotate line with accessibility context
+			const tableCtxSnapshot = this._accessibilityTableContext ? { ...this._accessibilityTableContext } : null;
+			line._accessibilityContext = {
+				role: accessibilityRole,
+				isFirstLine: isFirstLine,
+				isLastLine: line.lastLineInParagraph,
+				listContext: this._accessibilityListStack.length > 0 ? {
+					depth: this._accessibilityListStack.length,
+					itemIndex: this._accessibilityListStack[this._accessibilityListStack.length - 1].itemIndex,
+					isFirstInItem: isFirstLine && this._accessibilityListStack[this._accessibilityListStack.length - 1].isFirstNodeInItem,
+					isLastInItem: line.lastLineInParagraph && this._accessibilityListStack[this._accessibilityListStack.length - 1].isLastNodeInItem
+				} : null,
+				tableContext: tableCtxSnapshot
+			};
+			isFirstLine = false;
 
 			let positions = this.writer.addLine(line);
 			node.positions.push(positions);
@@ -1420,16 +1503,29 @@ class LayoutBuilder {
 
 	// images
 	processImage(node) {
+		node._accessibilityContext = {
+			role: (node.alt || node.actualText) ? 'Figure' : 'Artifact',
+			alt: node.alt,
+			actualText: node.actualText
+		};
 		let position = this.writer.addImage(node);
 		node.positions.push(position);
 	}
 
 	processCanvas(node) {
+		node.canvas.forEach(vector => {
+			vector._accessibilityContext = { role: 'Artifact' };
+		});
 		let positions = this.writer.addCanvas(node);
 		addAll(node.positions, positions);
 	}
 
 	processSVG(node) {
+		node._accessibilityContext = {
+			role: (node.alt || node.actualText) ? 'Figure' : 'Artifact',
+			alt: node.alt,
+			actualText: node.actualText
+		};
 		let position = this.writer.addSVG(node);
 		node.positions.push(position);
 	}

@@ -4,6 +4,7 @@ import SVGMeasure from './SVGMeasure';
 import { normalizePageSize, normalizePageMargin } from './PageSize';
 import { tableLayouts } from './tableLayouts';
 import Renderer from './Renderer';
+import AccessibilityTagger from './accessibilityTagger';
 import { isNumber, isValue } from './helpers/variableType';
 import { convertToDynamicContent } from './helpers/tools';
 
@@ -96,7 +97,18 @@ class PdfPrinter {
 		});
 
 		const renderer = new Renderer(this.pdfKitDoc, options.progressCallback);
-		renderer.renderPages(pages);
+
+		let tagger = null;
+		if (docDefinition.tagged) {
+			tagger = new AccessibilityTagger(this.pdfKitDoc);
+			tagger.initDocument();
+		}
+
+		renderer.renderPages(pages, tagger);
+
+		if (tagger) {
+			tagger.finalise();
+		}
 
 		return this.pdfKitDoc;
 	}
