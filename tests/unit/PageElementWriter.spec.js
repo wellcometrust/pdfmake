@@ -307,6 +307,33 @@ describe('PageElementWriter', function () {
 			assert.equal(ctx.pages.length, 1);
 			assert.equal(ctx.pages[0].items.length, 1);
 		});
+
+		it('should not create a blank page when the unbreakable block fills the page exactly and an empty virtual page is left behind', function () {
+			// Put some content on page 0 so the full-page unbreakable block must move
+			// to a new page (page 1). Without the fix an empty trailing virtual page
+			// (left by a margin/pageBreak:'after' inside the block) would be committed
+			// as a blank real page (page 2), pushing subsequent content to page 3.
+			pew.addLine(buildLine(30)); // page 0 — partially filled
+
+			pew.beginUnbreakableBlock();
+			addOneTenthLines(10); // fills virtual page exactly (availableHeight → 0)
+
+			// Directly force an extra empty virtual page in the unbreakable context,
+			// mimicking what a trailing bottom-margin or pageBreak:'after' would do.
+			let uCtx = pew.context();
+			uCtx.moveToNextPage(); // creates a 2nd virtual page with no items
+
+			pew.commitUnbreakableBlock();
+
+			// Page 0 has the pre-block line; page 1 has the 10-line block.
+			// No blank page should be inserted between them and the next content.
+			assert.equal(ctx.pages.length, 2, 'should be exactly 2 pages after commit: pre-block + block page');
+			assert.equal(ctx.pages[1].items.length, 10, 'the block page should have all 10 lines');
+
+			// Adding content after the block should go onto page 3, not page 4.
+			pew.addLine(buildLine(30));
+			assert.equal(ctx.pages.length, 3, 'next content should go on page 3, not page 4 (no blank page)');
+		});
 	});
 
 	describe('currentBlockToRepeatable', function () {

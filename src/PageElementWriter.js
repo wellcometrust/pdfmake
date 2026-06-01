@@ -119,6 +119,15 @@ class PageElementWriter extends ElementWriter {
 			let nbPages = unbreakableContext.pages.length;
 			for (let currentPage = 0; currentPage < nbPages; currentPage++) {
 				var fragment = unbreakableContext.pages[currentPage];
+
+				// Skip empty virtual pages — they arise when content fills the virtual page
+				// exactly and a trailing margin or pageBreak:'after' triggers an extra
+				// moveToNextPage() inside the unbreakable context, leaving a page with no
+				// items. Committing such a fragment would create a blank real page.
+				if (fragment.items.length === 0) {
+					continue;
+				}
+
 				fragment.xOffset = forcedX;
 				fragment.yOffset = forcedY;
 				//TODO: vectors can influence height in some situations
