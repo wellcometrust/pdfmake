@@ -53,6 +53,10 @@ class AccessibilityTagger {
 		this.currentCell = null;
 		this.tableIsTOC = false;
 
+		// BlockQuote grouping tracking
+		this.blockQuoteStack = [];
+		this.currentBlockQuote = null;
+
 		// Link tracking
 		this.currentLink = null;
 
@@ -360,6 +364,13 @@ class AccessibilityTagger {
 			this.currentCell.end();
 		}
 
+		// For TOC tables, content sits directly under TOCI (the row element).
+		// Don't create a TD/TH child — _getCurrentParent will return currentRow.
+		if (this.tableIsTOC) {
+			this.currentCell = null;
+			return;
+		}
+
 		let cellType = isHeader ? 'TH' : 'TD';
 		this.currentCell = this.doc.struct(cellType);
 		this.currentRow.add(this.currentCell);
@@ -434,6 +445,32 @@ class AccessibilityTagger {
 				this.doc.endMarkedContent();
 			}
 		}
+	}
+
+	// ============================================================================
+	// BlockQuote grouping
+	// ============================================================================
+
+	beginBlockQuote() {
+		this._closeTextElement();
+
+		if (this.currentBlockQuote) {
+			this.blockQuoteStack.push(this.currentBlockQuote);
+		}
+
+		let parent = this._getCurrentParent();
+		this.currentBlockQuote = this.doc.struct('BlockQuote');
+		if (parent) {
+			parent.add(this.currentBlockQuote);
+		}
+	}
+
+	endBlockQuote() {
+		this._closeTextElement();
+		if (this.currentBlockQuote) {
+			this.currentBlockQuote.end();
+		}
+		this.currentBlockQuote = this.blockQuoteStack.length > 0 ? this.blockQuoteStack.pop() : null;
 	}
 
 	// ============================================================================
@@ -553,6 +590,9 @@ class AccessibilityTagger {
 		if (this.currentLBody) {
 			return this.currentLBody;
 		}
+		if (this.currentBlockQuote) {
+			return this.currentBlockQuote;
+		}
 		if (this.currentSect) {
 			return this.currentSect;
 		}
@@ -573,6 +613,11 @@ class AccessibilityTagger {
 		// Close table structures
 		if (this.currentTable) {
 			this.endTable();
+		}
+
+		// Close any open BlockQuote groupings
+		while (this.currentBlockQuote) {
+			this.endBlockQuote();
 		}
 	}
 }

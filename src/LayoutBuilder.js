@@ -53,6 +53,7 @@ class LayoutBuilder {
 		this.verticalAlignmentItemStack = [];
 		this._accessibilityListStack = [];
 		this._accessibilityTableContext = null;
+		this._accessibilityBlockQuoteDepth = 0;
 	}
 
 	registerTableLayouts(tableLayouts) {
@@ -528,6 +529,9 @@ class LayoutBuilder {
 				this.writer.context().moveToRelative(relPosition.x || 0, relPosition.y || 0);
 			}
 
+			const isBlockQuote = node.accessibilityTag === 'BlockQuote';
+			if (isBlockQuote) { this._accessibilityBlockQuoteDepth++; }
+
 			if (node.stack) {
 				this.processVerticalContainer(node);
 			} else if (node.section) {
@@ -557,6 +561,8 @@ class LayoutBuilder {
 			} else if (!node._span) {
 				throw new Error(`Unrecognized document structure: ${stringifyNode(node)}`);
 			}
+
+			if (isBlockQuote) { this._accessibilityBlockQuoteDepth--; }
 
 			if (absPosition || relPosition) {
 				this.writer.context().endDetachedBlock();
@@ -1403,7 +1409,8 @@ class LayoutBuilder {
 					isFirstInItem: isFirstLine && this._accessibilityListStack[this._accessibilityListStack.length - 1].isFirstNodeInItem,
 					isLastInItem: line.lastLineInParagraph && this._accessibilityListStack[this._accessibilityListStack.length - 1].isLastNodeInItem
 				} : null,
-				tableContext: tableCtxSnapshot
+				tableContext: tableCtxSnapshot,
+				blockQuoteDepth: this._accessibilityBlockQuoteDepth
 			};
 			isFirstLine = false;
 

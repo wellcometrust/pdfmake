@@ -14,8 +14,9 @@ export function getAccessibilityRole(node) {
 		return 'Artifact';
 	}
 
-	// Explicit accessibilityTag takes precedence
-	if (node.accessibilityTag) {
+	// Explicit accessibilityTag takes precedence, except for grouping tags (BlockQuote)
+	// which are handled as containers — individual lines inside still get their own roles.
+	if (node.accessibilityTag && node.accessibilityTag !== 'BlockQuote') {
 		return node.accessibilityTag;
 	}
 

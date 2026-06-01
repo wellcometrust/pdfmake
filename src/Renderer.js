@@ -576,6 +576,8 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	const curTC = ctx.tableContext;
 	const prevLC = state.prevListContext;
 	const curLC = ctx.listContext;
+	const prevBQDepth = state.prevBlockQuoteDepth || 0;
+	const curBQDepth = ctx.blockQuoteDepth || 0;
 
 	// ==================== TABLE MANAGEMENT ====================
 
@@ -676,6 +678,22 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	// and by finalise() at document end
 
 	state.prevListContext = curLC || null;
+
+	// ==================== BLOCKQUOTE MANAGEMENT ====================
+
+	if (curBQDepth > prevBQDepth) {
+		// Entering one or more BlockQuote nesting levels
+		for (let i = prevBQDepth; i < curBQDepth; i++) {
+			tagger.beginBlockQuote();
+		}
+	} else if (curBQDepth < prevBQDepth) {
+		// Leaving one or more BlockQuote nesting levels
+		for (let i = prevBQDepth; i > curBQDepth; i--) {
+			tagger.endBlockQuote();
+		}
+	}
+
+	state.prevBlockQuoteDepth = curBQDepth;
 
 	// ==================== TEXT ELEMENT MANAGEMENT ====================
 
