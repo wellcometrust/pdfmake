@@ -103,6 +103,7 @@ module.exports = {
 			{
 				enforce: "pre",
 				test: /\.(cjs|js)$/,
+				exclude: /node_modules/,
 				use: ["source-map-loader"],
 			},
 			{
