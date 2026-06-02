@@ -60,9 +60,6 @@ class AccessibilityTagger {
 		// Link tracking
 		this.currentLink = null;
 
-		// Track what's currently open for page break handling
-		this.openStructures = [];
-
 		// Artifact nesting
 		this._artifactDepth = 0;
 
@@ -502,36 +499,6 @@ class AccessibilityTagger {
 	// ============================================================================
 
 	/**
-	 * Process the accessibility context of a line about to be rendered.
-	 * Opens/closes structure elements as needed based on state transitions.
-	 *
-	 * @param {object} ctx - The _accessibilityContext attached to the line
-	 * @param {string} ctx.role - Structure role: 'P', 'H1'-'H6', etc.
-	 * @param {boolean} ctx.isFirstLine - Whether this is the first line of the node
-	 * @param {boolean} ctx.isLastLine - Whether this is the last line (lastLineInParagraph)
-	 * @param {object} [ctx.tableContext] - Table context if inside a tagged table
-	 * @param {object} [ctx.listContext] - List context if inside a list
-	 */
-	processLineContext(ctx) {
-		if (!ctx) { return; }
-
-		// Handle table context first (opens table/row/cell structures)
-		if (ctx.tableContext) {
-			this._processTableContext(ctx.tableContext);
-		}
-
-		// Handle list context (opens list/item structures)
-		if (ctx.listContext) {
-			this._processListContext(ctx.listContext);
-		}
-
-		// Open the text element (P, H1-H6) if needed
-		if (ctx.role && ctx.role !== 'Artifact') {
-			this.beginTextElement(ctx.role);
-		}
-	}
-
-	/**
 	 * Handle end-of-structure signals from line context.
 	 *
 	 * @param {object} ctx - The _accessibilityContext
@@ -557,16 +524,6 @@ class AccessibilityTagger {
 				this.currentListItem = null;
 			}
 		}
-	}
-
-	_processTableContext() {
-		// Table/THead/TBody/TR/TH/TD opening is handled by the renderer
-		// via explicit calls (beginTable, beginRow, beginCell, etc.)
-	}
-
-	_processListContext() {
-		// List structure management is handled by explicit calls
-		// (beginList, beginListItem, endListItem, endList) from the layout/renderer
 	}
 
 	// ============================================================================

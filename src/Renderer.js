@@ -63,7 +63,8 @@ class Renderer {
 			currentTableHeaderOpen: false,
 			currentTableBodyOpen: false,
 			_prevRowIndex: -1,
-			_prevColIndex: -1
+			_prevColIndex: -1,
+			prevBlockQuoteDepth: 0
 		} : null;
 
 		for (let i = 0; i < pages.length; i++) {
@@ -82,6 +83,9 @@ class Renderer {
 				taggerState.currentTableBodyOpen = false;
 				taggerState._prevRowIndex = -1;
 				taggerState._prevColIndex = -1;
+				// beginPage() calls _closeAllOpenStructures() which ends all open BlockQuotes,
+				// so reset depth to 0 to keep taggerState in sync.
+				taggerState.prevBlockQuoteDepth = 0;
 			}
 
 			let page = pages[i];

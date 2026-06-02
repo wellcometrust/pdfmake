@@ -38,14 +38,6 @@ export function getAccessibilityRole(node) {
 		return 'Artifact';
 	}
 
-	// Tables - only tagged if explicitly marked
-	if (node.table) {
-		if (node.accessibilityTag === 'Table' || node.accessibilityTag === 'TOC') {
-			return node.accessibilityTag;
-		}
-		return null; // no structural tagging for unmarked tables
-	}
-
 	// Text nodes default to P (paragraph)
 	if (node.text !== undefined) {
 		return 'P';
