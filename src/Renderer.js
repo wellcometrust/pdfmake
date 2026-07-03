@@ -682,12 +682,22 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 			for (let d = prevLC.depth; d > curLC.depth; d--) {
 				tagger.endList();
 			}
-			// Now at the correct depth — start a new item if the index changed
-			if (curLC.itemIndex !== prevLC.itemIndex) {
+			// prevLC.itemIndex is the inner list's counter and is not comparable to
+			// curLC.itemIndex. Use parentItemIndices to get the outer list's item index
+			// from when we were inside the nested list.
+			const prevOuterItemIndex = prevLC.parentItemIndices[curLC.depth - 1];
+			if (curLC.itemIndex !== prevOuterItemIndex) {
 				tagger.beginListItem();
 			}
+		} else if (curLC.listNode !== prevLC.listNode) {
+			// Same depth but a different list — close the previous list and start a new one.
+			// Without this, adjacent {ul:[...]} blocks at the same depth are silently merged
+			// into a single L element because !curLC && prevLC never fires between them.
+			tagger.endList();
+			tagger.beginList();
+			tagger.beginListItem();
 		} else if (curLC.itemIndex !== prevLC.itemIndex) {
-			// Same depth, new item (previous item was closed by processLineEnd)
+			// Same list, same depth, new item (previous item was closed by processLineEnd)
 			tagger.beginListItem();
 		}
 	} else if (!curLC && prevLC) {
