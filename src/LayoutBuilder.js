@@ -1406,6 +1406,8 @@ class LayoutBuilder {
 				listContext: this._accessibilityListStack.length > 0 ? {
 					depth: this._accessibilityListStack.length,
 					itemIndex: this._accessibilityListStack[this._accessibilityListStack.length - 1].itemIndex,
+					listNode: this._accessibilityListStack[this._accessibilityListStack.length - 1].node,
+					parentItemIndices: this._accessibilityListStack.slice(0, -1).map(e => e.itemIndex),
 					isFirstInItem: isFirstLine && this._accessibilityListStack[this._accessibilityListStack.length - 1].isFirstNodeInItem,
 					isLastInItem: line.lastLineInParagraph && this._accessibilityListStack[this._accessibilityListStack.length - 1].isLastNodeInItem
 				} : null,

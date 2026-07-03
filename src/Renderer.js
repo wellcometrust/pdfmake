@@ -195,6 +195,9 @@ class Renderer {
 
 		// Accessibility: manage logical structure elements based on this line's context
 		if (tagger && line._accessibilityContext) {
+			if (line.inlines) {
+				tagger._currentLineText = line.inlines.map(i => i.text || '').join('');
+			}
 			_manageAccessibilityStructures(tagger, taggerState, line._accessibilityContext);
 		}
 
@@ -664,7 +667,7 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	// ==================== LIST MANAGEMENT ====================
 
 	if (curLC && !prevLC) {
-		// Entering a list for the first time
+		// Entering a list for the first time (or re-entering after mid-page close)
 		tagger.beginList();
 		tagger.beginListItem();
 	} else if (curLC && prevLC) {
@@ -672,14 +675,40 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 			// Nested list starting
 			tagger.beginList();
 			tagger.beginListItem();
+		} else if (curLC.depth < prevLC.depth) {
+			// Returning from nested list(s) — close each inner list level explicitly.
+			// Without this, currentList stays as the innermost L element and new items
+			// get added to the wrong list in the structure tree.
+			for (let d = prevLC.depth; d > curLC.depth; d--) {
+				tagger.endList();
+			}
+			// prevLC.itemIndex is the inner list's counter and is not comparable to
+			// curLC.itemIndex. Use parentItemIndices to get the outer list's item index
+			// from when we were inside the nested list.
+			const prevOuterItemIndex = prevLC.parentItemIndices[curLC.depth - 1];
+			if (curLC.itemIndex !== prevOuterItemIndex) {
+				tagger.beginListItem();
+			}
+		} else if (curLC.listNode !== prevLC.listNode) {
+			// Same depth but a different list — close the previous list and start a new one.
+			// Without this, adjacent {ul:[...]} blocks at the same depth are silently merged
+			// into a single L element because !curLC && prevLC never fires between them.
+			tagger.endList();
+			tagger.beginList();
+			tagger.beginListItem();
 		} else if (curLC.itemIndex !== prevLC.itemIndex) {
-			// New item at same depth (previous item was closed by processLineEnd)
+			// Same list, same depth, new item (previous item was closed by processLineEnd)
 			tagger.beginListItem();
 		}
-		// depth decrease is handled by processLineEnd + the next beginList/beginListItem
+	} else if (!curLC && prevLC) {
+		// Left all list nesting mid-page — close remaining lists now rather than
+		// deferring to the next page-change _closeAllOpenStructures call.
+		// This prevents stale L/LI/LBody references from accumulating and being
+		// pushed onto the listStack when a subsequent list begins on the same page.
+		while (tagger.getListDepth() > 0) {
+			tagger.endList();
+		}
 	}
-	// Leaving a list (prevLC && !curLC) is handled by tagger._closeAllOpenStructures on page change
-	// and by finalise() at document end
 
 	state.prevListContext = curLC || null;
 
