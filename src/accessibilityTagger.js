@@ -65,6 +65,9 @@ class AccessibilityTagger {
 
 		// Current figure
 		this._currentFigure = null;
+
+		// Set by the renderer before each _manageAccessibilityStructures call; used in warnings
+		this._currentLineText = '';
 	}
 
 	/**
@@ -543,28 +546,28 @@ class AccessibilityTagger {
 	_getCurrentParent() {
 		if (this.currentCell) {
 			if (!this.currentCell._ended) { return this.currentCell; }
-			console.warn('AccessibilityTagger: currentCell was cascade-ended unexpectedly');
+			console.warn(`AccessibilityTagger: currentCell was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
 			this.currentCell = null;
 		}
 		// For TOC tables, content goes directly under TOCI (the row), not a cell
 		if (this.tableIsTOC && this.currentRow) {
 			if (!this.currentRow._ended) { return this.currentRow; }
-			console.warn('AccessibilityTagger: currentRow (TOC) was cascade-ended unexpectedly');
+			console.warn(`AccessibilityTagger: currentRow (TOC) was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
 			this.currentRow = null;
 		}
 		if (this.currentLBody) {
 			if (!this.currentLBody._ended) { return this.currentLBody; }
-			console.warn('AccessibilityTagger: currentLBody was cascade-ended unexpectedly');
+			console.warn(`AccessibilityTagger: currentLBody was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
 			this.currentLBody = null;
 		}
 		if (this.currentBlockQuote) {
 			if (!this.currentBlockQuote._ended) { return this.currentBlockQuote; }
-			console.warn('AccessibilityTagger: currentBlockQuote was cascade-ended unexpectedly');
+			console.warn(`AccessibilityTagger: currentBlockQuote was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
 			this.currentBlockQuote = null;
 		}
 		if (this.currentSect) {
 			if (!this.currentSect._ended) { return this.currentSect; }
-			console.warn('AccessibilityTagger: currentSect was cascade-ended unexpectedly');
+			console.warn(`AccessibilityTagger: currentSect was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
 			this.currentSect = null;
 		}
 		return this.documentElement;

@@ -195,6 +195,9 @@ class Renderer {
 
 		// Accessibility: manage logical structure elements based on this line's context
 		if (tagger && line._accessibilityContext) {
+			if (line.inlines) {
+				tagger._currentLineText = line.inlines.map(i => i.text || '').join('');
+			}
 			_manageAccessibilityStructures(tagger, taggerState, line._accessibilityContext);
 		}
 
