@@ -532,28 +532,52 @@ class AccessibilityTagger {
 
 	/**
 	 * Get the current parent element for adding new child structures.
-	 * Priority order: cell > LBody > Sect
+	 * Priority order: cell > row (TOC) > LBody > BlockQuote > Sect > Document
+	 *
+	 * Skips and nulls any reference that was cascade-ended by PDFKit without
+	 * the tagger explicitly closing it, which would otherwise cause
+	 * "Cannot add child to already-ended structure element" errors.
 	 *
 	 * @returns {object|null} The current PDFKit struct element to use as parent
 	 */
 	_getCurrentParent() {
 		if (this.currentCell) {
-			return this.currentCell;
+			if (!this.currentCell._ended) { return this.currentCell; }
+			console.warn('AccessibilityTagger: currentCell was cascade-ended unexpectedly');
+			this.currentCell = null;
 		}
 		// For TOC tables, content goes directly under TOCI (the row), not a cell
 		if (this.tableIsTOC && this.currentRow) {
-			return this.currentRow;
+			if (!this.currentRow._ended) { return this.currentRow; }
+			console.warn('AccessibilityTagger: currentRow (TOC) was cascade-ended unexpectedly');
+			this.currentRow = null;
 		}
 		if (this.currentLBody) {
-			return this.currentLBody;
+			if (!this.currentLBody._ended) { return this.currentLBody; }
+			console.warn('AccessibilityTagger: currentLBody was cascade-ended unexpectedly');
+			this.currentLBody = null;
 		}
 		if (this.currentBlockQuote) {
-			return this.currentBlockQuote;
+			if (!this.currentBlockQuote._ended) { return this.currentBlockQuote; }
+			console.warn('AccessibilityTagger: currentBlockQuote was cascade-ended unexpectedly');
+			this.currentBlockQuote = null;
 		}
 		if (this.currentSect) {
-			return this.currentSect;
+			if (!this.currentSect._ended) { return this.currentSect; }
+			console.warn('AccessibilityTagger: currentSect was cascade-ended unexpectedly');
+			this.currentSect = null;
 		}
 		return this.documentElement;
+	}
+
+	/**
+	 * Returns the current list nesting depth as the tagger sees it.
+	 * Used by the renderer to close the right number of list levels.
+	 *
+	 * @returns {number} The number of currently open list levels.
+	 */
+	getListDepth() {
+		return this.listStack.length + (this.currentList ? 1 : 0);
 	}
 
 	/**
