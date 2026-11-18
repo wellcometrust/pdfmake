@@ -586,6 +586,27 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	const prevBQDepth = state.prevBlockQuoteDepth || 0;
 	const curBQDepth = ctx.blockQuoteDepth || 0;
 
+	// ==================== BLOCKQUOTE MANAGEMENT ====================
+	// Runs first so a closing BlockQuote is fully ended (and its reference nulled)
+	// before Table/List management below might otherwise attach a new Table/List as
+	// a child of it via _getCurrentParent() — which would then get silently
+	// cascade-ended when endBlockQuote() ends the BlockQuote later in this same call,
+	// leaving the tagger holding a stale "already-ended" currentTable/currentList reference.
+
+	if (curBQDepth > prevBQDepth) {
+		// Entering one or more BlockQuote nesting levels
+		for (let i = prevBQDepth; i < curBQDepth; i++) {
+			tagger.beginBlockQuote();
+		}
+	} else if (curBQDepth < prevBQDepth) {
+		// Leaving one or more BlockQuote nesting levels
+		for (let i = prevBQDepth; i > curBQDepth; i--) {
+			tagger.endBlockQuote();
+		}
+	}
+
+	state.prevBlockQuoteDepth = curBQDepth;
+
 	// ==================== TABLE MANAGEMENT ====================
 
 	const prevInTaggedTable = prevTC && prevTC.tagged;
@@ -711,22 +732,6 @@ function _manageAccessibilityStructures(tagger, state, ctx) {
 	}
 
 	state.prevListContext = curLC || null;
-
-	// ==================== BLOCKQUOTE MANAGEMENT ====================
-
-	if (curBQDepth > prevBQDepth) {
-		// Entering one or more BlockQuote nesting levels
-		for (let i = prevBQDepth; i < curBQDepth; i++) {
-			tagger.beginBlockQuote();
-		}
-	} else if (curBQDepth < prevBQDepth) {
-		// Leaving one or more BlockQuote nesting levels
-		for (let i = prevBQDepth; i > curBQDepth; i--) {
-			tagger.endBlockQuote();
-		}
-	}
-
-	state.prevBlockQuoteDepth = curBQDepth;
 
 	// ==================== TEXT ELEMENT MANAGEMENT ====================
 

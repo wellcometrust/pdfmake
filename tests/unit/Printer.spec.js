@@ -275,4 +275,27 @@ describe('Printer', function () {
 		});
 	});
 
+	it('should not throw when a tagged BlockQuote is immediately followed by a list', async function () {
+		printer = new Printer(fontDescriptors, virtualfs, new URLResolver(virtualfs));
+
+		var docDefinition = {
+			tagged: true,
+			content: [
+				{
+					accessibilityTag: 'BlockQuote',
+					table: {
+						body: [
+							[{ text: 'Quoted text' }]
+						]
+					}
+				},
+				{
+					ol: ['First item', 'Second item']
+				}
+			]
+		};
+
+		await printer.createPdfKitDocument(docDefinition);
+	});
+
 });

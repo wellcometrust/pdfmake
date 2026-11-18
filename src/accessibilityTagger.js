@@ -185,7 +185,7 @@ class AccessibilityTagger {
 			return null;
 		}
 
-		let activeElement = this.currentLink || this.currentTextElement;
+		let activeElement = this._liveOrNull('currentLink') || this._liveOrNull('currentTextElement');
 		if (!activeElement) {
 			return null;
 		}
@@ -207,8 +207,9 @@ class AccessibilityTagger {
 		// Close any open text element first
 		this._closeTextElement();
 
-		// Push current list context for nesting
-		if (this.currentList) {
+		// Push current list context for nesting — but only if it's still live;
+		// a cascade-ended list shouldn't be resurrected when this nesting level ends.
+		if (this._liveOrNull('currentList')) {
 			this.listStack.push({
 				listElement: this.currentList,
 				currentItem: this.currentListItem,
@@ -236,10 +237,13 @@ class AccessibilityTagger {
 			this.currentListItem.end();
 		}
 
+		// currentList may have been cascade-ended by an ancestor closing elsewhere
+		// (e.g. a BlockQuote or table cell) — recover with a fresh list rather
+		// than crashing with "Cannot add child to already-ended structure element".
+		this._ensureLive('currentList', 'L');
+
 		this.currentListItem = this.doc.struct('LI');
-		if (this.currentList) {
-			this.currentList.add(this.currentListItem);
-		}
+		this.currentList.add(this.currentListItem);
 
 		this.currentLBody = this.doc.struct('LBody');
 		this.currentListItem.add(this.currentLBody);
@@ -296,7 +300,7 @@ class AccessibilityTagger {
 	}
 
 	beginTableHeader() {
-		if (!this.currentTable) { return; }
+		if (!this._liveOrNull('currentTable')) { return; }
 		this.currentTHead = this.doc.struct('THead');
 		this.currentTable.add(this.currentTHead);
 	}
@@ -309,7 +313,7 @@ class AccessibilityTagger {
 	}
 
 	beginTableBody() {
-		if (!this.currentTable) { return; }
+		if (!this._liveOrNull('currentTable')) { return; }
 		this.currentTBody = this.doc.struct('TBody');
 		this.currentTable.add(this.currentTBody);
 	}
@@ -322,11 +326,11 @@ class AccessibilityTagger {
 	}
 
 	beginRow() {
-		if (!this.currentTable) { return; }
+		if (!this._liveOrNull('currentTable')) { return; }
 		let rowType = this.tableIsTOC ? 'TOCI' : 'TR';
 		this.currentRow = this.doc.struct(rowType);
 		// For TOC, rows go directly under TOC (no THead/TBody)
-		let parent = this.tableIsTOC ? this.currentTable : (this.currentTHead || this.currentTBody || this.currentTable);
+		let parent = this.tableIsTOC ? this.currentTable : (this._liveOrNull('currentTHead') || this._liveOrNull('currentTBody') || this.currentTable);
 		parent.add(this.currentRow);
 	}
 
@@ -350,7 +354,7 @@ class AccessibilityTagger {
 	}
 
 	beginCell(isHeader) {
-		if (!this.currentRow) { return; }
+		if (!this._liveOrNull('currentRow')) { return; }
 
 		this._closeTextElement();
 
@@ -454,7 +458,9 @@ class AccessibilityTagger {
 	beginBlockQuote() {
 		this._closeTextElement();
 
-		if (this.currentBlockQuote) {
+		// Only push if still live — a cascade-ended BlockQuote shouldn't be
+		// resurrected as the parent when this nesting level ends.
+		if (this._liveOrNull('currentBlockQuote')) {
 			this.blockQuoteStack.push(this.currentBlockQuote);
 		}
 
@@ -479,7 +485,7 @@ class AccessibilityTagger {
 
 	beginLink() {
 		// Link is a child of the current text element (P, H, LBody)
-		let parent = this.currentTextElement;
+		let parent = this._liveOrNull('currentTextElement');
 		if (!parent) {
 			// If no text element open, use the current parent container
 			parent = this._getCurrentParent();
@@ -544,33 +550,62 @@ class AccessibilityTagger {
 	 * @returns {object|null} The current PDFKit struct element to use as parent
 	 */
 	_getCurrentParent() {
-		if (this.currentCell) {
-			if (!this.currentCell._ended) { return this.currentCell; }
-			console.warn(`AccessibilityTagger: currentCell was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
-			this.currentCell = null;
-		}
 		// For TOC tables, content goes directly under TOCI (the row), not a cell
-		if (this.tableIsTOC && this.currentRow) {
-			if (!this.currentRow._ended) { return this.currentRow; }
-			console.warn(`AccessibilityTagger: currentRow (TOC) was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
-			this.currentRow = null;
+		return this._liveOrNull('currentCell') ||
+			(this.tableIsTOC && this._liveOrNull('currentRow')) ||
+			this._liveOrNull('currentLBody') ||
+			this._liveOrNull('currentBlockQuote') ||
+			this._liveOrNull('currentSect') ||
+			this.documentElement;
+	}
+
+	/**
+	 * Check whether a tracked structure element reference is still open — i.e.
+	 * not cascade-ended by an ancestor's .end() call elsewhere (PDFKit's
+	 * PDFStructureElement.end() recursively ends all descendants). If it was
+	 * cascade-ended, warn and null out the reference so callers fall back to
+	 * a valid ancestor instead of crashing on the next .add() call.
+	 *
+	 * @param {string} propName - name of the `this.<propName>` reference to check
+	 * @returns {object|null} the element if still open, otherwise null
+	 */
+	_liveOrNull(propName) {
+		let el = this[propName];
+		if (!el) {
+			return null;
 		}
-		if (this.currentLBody) {
-			if (!this.currentLBody._ended) { return this.currentLBody; }
-			console.warn(`AccessibilityTagger: currentLBody was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
-			this.currentLBody = null;
+		if (!el._ended) {
+			return el;
 		}
-		if (this.currentBlockQuote) {
-			if (!this.currentBlockQuote._ended) { return this.currentBlockQuote; }
-			console.warn(`AccessibilityTagger: currentBlockQuote was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
-			this.currentBlockQuote = null;
+		console.warn(`AccessibilityTagger: ${propName} was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
+		this[propName] = null;
+		return null;
+	}
+
+	/**
+	 * Ensure `this[propName]` currently holds a live (not cascade-ended)
+	 * structure element, replacing it with a fresh one attached under
+	 * _getCurrentParent() if it was cascade-ended or missing. Used as a
+	 * last-resort recovery so a stray cascade-ended reference can't crash
+	 * the renderer — the recovered element just starts a new logical
+	 * structure at the current position rather than aborting the render.
+	 *
+	 * @param {string} propName - name of the `this.<propName>` reference to check
+	 * @param {string} structType - PDFKit struct type to create if recovery is needed
+	 * @returns {object} the live structure element
+	 */
+	_ensureLive(propName, structType) {
+		let el = this._liveOrNull(propName);
+		if (el) {
+			return el;
 		}
-		if (this.currentSect) {
-			if (!this.currentSect._ended) { return this.currentSect; }
-			console.warn(`AccessibilityTagger: currentSect was cascade-ended unexpectedly (line text: "${this._currentLineText}")`);
-			this.currentSect = null;
+		let parent = this._getCurrentParent();
+		el = this.doc.struct(structType);
+		if (parent) {
+			parent.add(el);
 		}
-		return this.documentElement;
+		this[propName] = el;
+		return el;
 	}
 
 	/**
